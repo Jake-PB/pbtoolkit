@@ -1,0 +1,27 @@
+{
+  "name": "pbtoolkit",
+  "version": "1.3.0",
+  "description": "Productboard toolkit — import, export, migrate entities, notes, and companies",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "nodemon src/server.js"
+  },
+  "dependencies": {
+    "archiver": "^7.0.1",
+    "cors": "^2.8.5",
+    "dotenv": "^16.0.0",
+    "express": "^4.18.2",
+    "express-rate-limit": "^8.2.1",
+    "express-slow-down": "^3.0.1",
+    "helmet": "^8.1.0",
+    "papaparse": "^5.4.1",
+    "sanitize-html": "^2.13.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.2"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

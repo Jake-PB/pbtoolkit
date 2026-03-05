@@ -1,0 +1,212 @@
+/**
+ * Import coordinator for entities.
+ *
+ * Orchestrates a full multi-entity import run:
+ *   1. Parse + normalize all uploaded CSVs
+ *   2. Preflight seed idCache from rows that already have pb_id
+ *   3. Main upsert loop (CREATE / PATCH per row, in dependency order)
+ *   4. Relationship pass (parent links + connected links)
+ *   5. Return summary for SSE complete event
+ *
+ * When options.relationshipsOnly = true, step 3 is skipped — only the
+ * relationship pass runs. Used by POST /api/entities/relationships.
+ */
+
+const Papa = require('papaparse');
+const { ENTITY_ORDER, ENTITY_LABELS, TYPE_CODE } = require('./meta');
+const { parseEntityCsv } = require('./csvParser');
+const { createIdCache } = require('./idCache');
+const { applyMapping, buildCreatePayload, buildPatchPayload } = require('./fieldBuilder');
+const { writeRelations } = require('./relationWriter');
+
+/** Extract a readable message from a PB API error (mirrors parseApiError in routes/import.js) */
+function parseApiError(err) {
+  const msg = err.message || String(err);
+  const jsonMatch = msg.match(/\{[\s\S]*"errors"[\s\S]*\}/);
+  if (jsonMatch) {
+    try {
+      const parsed = JSON.parse(jsonMatch[0]);
+      const first = parsed.errors?.[0];
+      if (first) return first.detail || first.title || msg;
+    } catch (_) {}
+  }
+  return msg;
+}
+
+/**
+ * Run a full entity import.
+ *
+ * @param {{ [entityType]: { csvText, filename } }} files
+ * @param {{ [entityType]: { columns: { internalId: csvHeader } } }} mappings
+ * @param {{ [entityType]: { systemFields, customFields } }} configs  — from fetchEntityConfigs()
+ * @param {{
+ *   multiSelectMode?: string,
+ *   bypassEmptyCells?: boolean,
+ *   bypassHtmlFormatter?: boolean,
+ *   fiscal_year_start_month?: number,
+ *   autoGenerateExtKeys?: boolean,
+ *   workspaceCode?: string,
+ *   relationshipsOnly?: boolean,
+ * }} options
+ * @param {Function} pbFetch
+ * @param {Function} withRetry
+ * @param {{ onProgress: Function, onLog: Function }} callbacks
+ * @param {{ abortSignal: { aborted: boolean } }} signals
+ *
+ * @returns {{
+ *   perEntity: { entityType, created, updated, errors, skipped }[],
+ *   totalCreated: number,
+ *   totalUpdated: number,
+ *   totalErrors: number,
+ *   stopped: boolean,
+ *   relationCounts: { parentLinks, relationshipLinks, errors },
+ *   newIdsCsv?: string,
+ * }}
+ */
+async function runImport(files, mappings, configs, options, pbFetch, withRetry, { onProgress, onLog }, { abortSignal }) {
+  const {
+    multiSelectMode          = 'set',
+    bypassEmptyCells         = false,
+    bypassHtmlFormatter      = false,
+    fiscal_year_start_month  = 1,
+    autoGenerateExtKeys      = false,
+    workspaceCode            = '',
+    relationshipsOnly        = false,
+  } = options || {};
+
+  const idCache   = createIdCache();
+  const perEntity = [];
+  let totalCreated = 0;
+  let totalUpdated = 0;
+  let totalErrors  = 0;
+  let stopped      = false;
+  const autoGenRows = []; // { entityType, ext_key, pb_id } for newIdsCsv
+
+  // ── Step 1: Parse + normalize all files ───────────────────────────────────
+  const normalizedByType = {};
+  for (const type of ENTITY_ORDER) {
+    if (!files[type]) continue;
+    const { rows, errors } = parseEntityCsv(files[type].csvText);
+    if (errors.length) {
+      onLog('warn', `CSV parse warnings for ${ENTITY_LABELS[type]}: ${errors.join('; ')}`);
+    }
+    const mapping = mappings[type] || { columns: {} };
+    normalizedByType[type] = applyMapping(rows, type, mapping);
+    const rowCount = normalizedByType[type].length;
+    if (rowCount === 0) {
+      onLog('warn', `${ENTITY_LABELS[type]}: no data rows found — skipped`, { entityType: type });
+    } else if (rowCount > 50000) {
+      onLog('warn', `${ENTITY_LABELS[type]}: ${rowCount.toLocaleString()} rows — large file, this may take a while`, { entityType: type });
+    }
+  }
+
+  // ── Step 2: Preflight seed idCache ────────────────────────────────────────
+  idCache.seed(normalizedByType);
+
+  // ── Step 3: Main upsert loop ──────────────────────────────────────────────
+  if (!relationshipsOnly) {
+    const types = ENTITY_ORDER.filter((t) => normalizedByType[t]);
+    for (let ti = 0; ti < types.length; ti++) {
+      if (abortSignal.aborted) { stopped = true; break; }
+
+      const type  = types[ti];
+      const rows  = normalizedByType[type];
+      const config = configs[type] || { systemFields: [], customFields: [] };
+      const pctBase = 5 + Math.round((ti / types.length) * 80);
+
+      onProgress(`Importing ${ENTITY_LABELS[type]}…`, pctBase);
+
+      let typeCreated = 0;
+      let typeUpdated = 0;
+      let typeErrors  = 0;
+      let typeSkipped = 0;
+      let autoCounter = 1; // per-type counter for ext_key auto-generation
+
+      for (let i = 0; i < rows.length; i++) {
+        if (abortSignal.aborted) { stopped = true; break; }
+
+        const row    = rows[i];
+        const rowNum = i + 1;
+        const pct    = pctBase + Math.round(((i + 1) / rows.length) * (80 / types.length));
+        onProgress(`${ENTITY_LABELS[type]} — row ${rowNum}/${rows.length}`, pct);
+
+        try {
+          if (row._pbId) {
+            // ── PATCH ──────────────────────────────────────────────────────
+            const payload = buildPatchPayload(row, type, config, { multiSelectMode, bypassEmptyCells, bypassHtmlFormatter, fiscal_year_start_month });
+            await withRetry(
+              () => pbFetch('patch', `/v2/entities/${encodeURIComponent(row._pbId)}`, payload),
+              `patch:${type}`,
+            );
+            typeUpdated++;
+            onLog('success', `Row ${rowNum}: Updated ${type} ${row._pbId}`, { entityType: type });
+          } else {
+            // ── CREATE ─────────────────────────────────────────────────────
+            // Auto-generate ext_key if requested and not already set
+            if (autoGenerateExtKeys && !row._extKey) {
+              const code = TYPE_CODE[type] || type.slice(0, 4).toUpperCase();
+              row._extKey = `${workspaceCode}-${code}-${autoCounter}`;
+              autoCounter++;
+            }
+
+            const payload = buildCreatePayload(row, type, config, idCache, { multiSelectMode, bypassEmptyCells, bypassHtmlFormatter, fiscal_year_start_month });
+            const resp = await withRetry(
+              () => pbFetch('post', '/v2/entities', payload),
+              `create:${type}`,
+            );
+
+            const newPbId = resp?.data?.id;
+            if (!newPbId) throw new Error('API response missing data.id');
+
+            row._pbId = newPbId;
+            if (row._extKey) {
+              idCache.set(type, row._extKey, newPbId);
+            }
+            if (autoGenerateExtKeys && row._extKey) {
+              autoGenRows.push({ entityType: type, ext_key: row._extKey, pb_id: newPbId });
+            }
+
+            typeCreated++;
+            onLog('success', `Row ${rowNum}: Created ${type} → ${newPbId}${row._extKey ? ` (${row._extKey})` : ''}`, { entityType: type });
+          }
+        } catch (err) {
+          typeErrors++;
+          const msg = parseApiError(err);
+          onLog('error', `Row ${rowNum}: ${msg}`, { entityType: type });
+        }
+      }
+
+      perEntity.push({ entityType: type, created: typeCreated, updated: typeUpdated, errors: typeErrors, skipped: typeSkipped });
+      totalCreated += typeCreated;
+      totalUpdated += typeUpdated;
+      totalErrors  += typeErrors;
+    }
+  } else {
+    // relationshipsOnly: populate perEntity stubs so the complete summary is consistent
+    for (const type of ENTITY_ORDER.filter((t) => normalizedByType[t])) {
+      perEntity.push({ entityType: type, created: 0, updated: 0, errors: 0, skipped: 0 });
+    }
+  }
+
+  // ── Step 4: Relationship pass ─────────────────────────────────────────────
+  if (!stopped) {
+    onProgress('Writing relationships…', 93);
+    const allRows = ENTITY_ORDER.flatMap((t) => normalizedByType[t] || []);
+    const relationCounts = await writeRelations(allRows, idCache, pbFetch, withRetry, onLog);
+    totalErrors += relationCounts.errors;
+
+    onProgress('Done', 100);
+
+    // ── Step 5: newIdsCsv ──────────────────────────────────────────────────
+    let newIdsCsv;
+    if (autoGenerateExtKeys && autoGenRows.length) {
+      newIdsCsv = Papa.unparse(autoGenRows, { header: true, columns: ['entityType', 'ext_key', 'pb_id'] });
+    }
+
+    return { perEntity, totalCreated, totalUpdated, totalErrors, stopped, relationCounts, newIdsCsv };
+  }
+
+  return { perEntity, totalCreated, totalUpdated, totalErrors, stopped, relationCounts: { parentLinks: 0, relationshipLinks: 0, errors: 0 } };
+}
+
+module.exports = { runImport };

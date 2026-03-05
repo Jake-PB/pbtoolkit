@@ -1,0 +1,1235 @@
+/* =========================================================
+   PBToolkit — Entities module frontend
+   Phase 1: Templates view
+   ========================================================= */
+
+// Entity type ordering and labels (mirrors src/services/entities/meta.js)
+const ENT_ORDER = [
+  'objective', 'keyResult', 'initiative', 'product', 'component',
+  'feature', 'subfeature', 'releaseGroup', 'release',
+];
+
+const ENT_LABELS = {
+  objective:    'Objectives',
+  keyResult:    'Key Results',
+  initiative:   'Initiatives',
+  product:      'Products',
+  component:    'Components',
+  feature:      'Features',
+  subfeature:   'Subfeatures',
+  releaseGroup: 'Release Groups',
+  release:      'Releases',
+};
+
+// ── Utilities ──────────────────────────────────────────────
+
+function nowStamp() {
+  const d = new Date();
+  const pad = (n) => String(n).padStart(2, '0');
+  return (
+    `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}` +
+    `-${pad(d.getHours())}${pad(d.getMinutes())}`
+  );
+}
+
+// ── Templates view ─────────────────────────────────────────
+
+function initEntitiesTemplatesView() {
+  const grid = document.getElementById('ent-templates-checkboxes');
+  const btnDownload = document.getElementById('btn-ent-templates-download');
+  if (!grid) return;
+
+  ENT_ORDER.forEach((type) => {
+    const label = document.createElement('label');
+    label.className = 'checkbox-row';
+    label.innerHTML = `<input type="checkbox" data-template-type="${type}" checked />${ENT_LABELS[type]}`;
+    grid.appendChild(label);
+  });
+
+  const syncBtn = () => {
+    if (btnDownload) btnDownload.disabled = entTemplatesGetSelected().length === 0;
+  };
+
+  document.getElementById('btn-ent-templates-select-all')?.addEventListener('click', () => {
+    grid.querySelectorAll('input').forEach((cb) => { cb.checked = true; });
+    syncBtn();
+  });
+  document.getElementById('btn-ent-templates-clear-all')?.addEventListener('click', () => {
+    grid.querySelectorAll('input').forEach((cb) => { cb.checked = false; });
+    syncBtn();
+  });
+  grid.addEventListener('change', syncBtn);
+  syncBtn();
+}
+
+function entTemplatesGetSelected() {
+  const grid = document.getElementById('ent-templates-checkboxes');
+  if (!grid) return [];
+  return [...grid.querySelectorAll('input[type=checkbox]:checked')]
+    .map((cb) => cb.dataset.templateType);
+}
+
+async function downloadSelectedTemplates() {
+  const types = entTemplatesGetSelected();
+  if (!types.length) return;
+
+  requireToken(async () => {
+    const btn = document.getElementById('btn-ent-templates-download');
+    if (btn) { btn.disabled = true; btn.textContent = 'Downloading…'; }
+    hideEntitiesTemplatesError();
+
+    try {
+      let res;
+      let filename;
+
+      if (types.length === 1) {
+        res = await fetch(`/api/entities/templates/${types[0]}`, { headers: buildHeaders() });
+        filename = `entities-template-${types[0]}.csv`;
+      } else {
+        const qs = new URLSearchParams({ types: types.join(',') });
+        res = await fetch(`/api/entities/templates.zip?${qs}`, { headers: buildHeaders() });
+        filename = `pbtoolkit-entities-templates-${nowStamp()}.zip`;
+      }
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+        showEntitiesTemplatesError(err.error || `Failed to download (${res.status})`);
+        return;
+      }
+
+      const blob = await res.blob();
+      triggerDownload(blob, filename);
+    } catch (e) {
+      showEntitiesTemplatesError(`Could not download templates: ${e.message}`);
+    } finally {
+      if (btn) { btn.disabled = entTemplatesGetSelected().length === 0; btn.textContent = 'Download selected'; }
+    }
+  });
+}
+
+function showEntitiesTemplatesError(msg) {
+  const el = document.getElementById('entities-templates-error');
+  const msgEl = document.getElementById('entities-templates-error-msg');
+  if (el && msgEl) { msgEl.textContent = msg; el.classList.remove('hidden'); }
+}
+
+function hideEntitiesTemplatesError() {
+  const el = document.getElementById('entities-templates-error');
+  if (el) el.classList.add('hidden');
+}
+
+// ── Import view ────────────────────────────────────────────
+
+// Alias map for auto-mapping CSV column headers to internal field IDs.
+// Each entry lists lowercase candidate strings that should map to that field.
+// Mirrors the NOTES_AUTODETECT pattern used in app.js for notes/companies.
+const ENT_FIELD_ALIASES = {
+  'pb_id':                   ['pb_id', 'pb id', 'entity id', 'id', 'uuid'],
+  'ext_key':                 ['ext_key', 'ext key', 'external key', 'external_key'],
+  'name':                    ['name', 'title', 'entity name', 'feature name', 'objective name', 'initiative name'],
+  'description':             ['description', 'desc', 'details', 'body'],
+  'owner':                   ['owner', 'owner_email', 'owner email'],
+  'status':                  ['status'],
+  'phase':                   ['phase'],
+  'teams':                   ['teams', 'team'],
+  'archived':                ['archived'],
+  'workprogress':            ['workprogress', 'work_progress', 'work progress', 'progress'],  // normalised key
+  'timeframe_start':         ['timeframe_start', 'timeframe_start (yyyy-mm-dd)', 'timeframe start', 'start_date', 'start date'],
+  'timeframe_end':           ['timeframe_end', 'timeframe_end (yyyy-mm-dd)', 'timeframe end', 'end_date', 'end date'],
+  'health_status':           ['health_status', 'health status'],
+  'health_comment':          ['health_comment', 'health comment'],
+  'health_updated_by_email': ['health_updated_by (email)', 'health_updated_by', 'health updated by', 'health updated by (email)'],
+  'parent_ext_key':          ['parent_ext_key', 'parent ext key', 'parent'],
+  'parent_feat_ext_key':     ['parent_feat_ext_key', 'parent feat ext key', 'parent feature'],
+  'parent_obj_ext_key':      ['parent_obj_ext_key', 'parent obj ext key', 'parent objective'],
+  'parent_rlgr_ext_key':     ['parent_rlgr_ext_key', 'parent rlgr ext key', 'parent release group'],
+  'connected_rels_ext_key':  ['connected_rels_ext_key', 'connected releases'],
+  'connected_objs_ext_key':  ['connected_objs_ext_key', 'connected objectives'],
+  'connected_inis_ext_key':  ['connected_inis_ext_key', 'connected initiatives'],
+};
+
+// Entity types that have timeframe (mirrors HAS_TIMEFRAME in meta.js)
+const ENT_HAS_TIMEFRAME = new Set([
+  'objective', 'keyResult', 'initiative', 'feature', 'subfeature', 'release',
+]);
+
+// Entity types that have health (mirrors HEALTH_TYPES in meta.js)
+const ENT_HEALTH_TYPES = new Set([
+  'objective', 'keyResult', 'initiative', 'feature', 'subfeature',
+]);
+
+// Preferred order for system fields in mapping table (mirrors SYSTEM_FIELD_ORDER in meta.js)
+const ENT_SYSTEM_FIELD_ORDER = [
+  'name', 'description', 'owner', 'status', 'phase', 'teams', 'archived', 'workProgress',
+];
+
+// Relationship field definitions per entity type (mirrors relationshipColumns() in meta.js)
+function entRelFieldDefs(entityType) {
+  const defs = [];
+  if (['component', 'feature'].includes(entityType))
+    defs.push({ id: 'parent_ext_key', label: 'Parent (ext_key or UUID)', required: false, defaultHeader: 'parent_ext_key' });
+  if (entityType === 'subfeature')
+    defs.push({ id: 'parent_feat_ext_key', label: 'Parent feature (ext_key or UUID)', required: false, defaultHeader: 'parent_feat_ext_key' });
+  if (['objective', 'keyResult'].includes(entityType))
+    defs.push({ id: 'parent_obj_ext_key', label: 'Parent objective (ext_key or UUID)', required: false, defaultHeader: 'parent_obj_ext_key' });
+  if (entityType === 'release')
+    defs.push({ id: 'parent_rlgr_ext_key', label: 'Parent release group (ext_key or UUID) *', required: true, defaultHeader: 'parent_rlgr_ext_key' });
+  if (['initiative', 'feature', 'subfeature'].includes(entityType))
+    defs.push({ id: 'connected_rels_ext_key', label: 'Connected releases (comma-sep.)', required: false, defaultHeader: 'connected_rels_ext_key' });
+  if (['initiative', 'feature'].includes(entityType))
+    defs.push({ id: 'connected_objs_ext_key', label: 'Connected objectives (comma-sep.)', required: false, defaultHeader: 'connected_objs_ext_key' });
+  if (entityType === 'feature')
+    defs.push({ id: 'connected_inis_ext_key', label: 'Connected initiatives (comma-sep.)', required: false, defaultHeader: 'connected_inis_ext_key' });
+  return defs;
+}
+
+// Build the ordered list of field definitions for the mapping table
+function entGetFieldDefs(entityType, configs) {
+  const entityConfig = (configs && configs[entityType]) || { systemFields: [], customFields: [] };
+  const defs = [];
+
+  // 1. Tracking columns
+  defs.push({ id: 'pb_id',   label: 'pb_id',   required: false, group: 'tracking', defaultHeader: 'pb_id' });
+  defs.push({ id: 'ext_key', label: 'ext_key', required: false, group: 'tracking', defaultHeader: 'ext_key' });
+
+  // 2. System fields from configs, in preferred order
+  const sorted = [...entityConfig.systemFields].sort((a, b) => {
+    const ai = ENT_SYSTEM_FIELD_ORDER.indexOf(a.id);
+    const bi = ENT_SYSTEM_FIELD_ORDER.indexOf(b.id);
+    return (ai === -1 ? 999 : ai) - (bi === -1 ? 999 : bi);
+  });
+  sorted.forEach((f) => {
+    defs.push({ id: f.id, label: f.name, required: f.id === 'name', group: 'system', defaultHeader: f.name, displayType: f.displayType });
+  });
+
+  // 3. Synthetic timeframe columns
+  if (ENT_HAS_TIMEFRAME.has(entityType)) {
+    defs.push({ id: 'timeframe_start', label: 'Timeframe start (YYYY-MM-DD)', required: false, group: 'timeframe', defaultHeader: 'timeframe_start (YYYY-MM-DD)' });
+    defs.push({ id: 'timeframe_end',   label: 'Timeframe end (YYYY-MM-DD)',   required: false, group: 'timeframe', defaultHeader: 'timeframe_end (YYYY-MM-DD)' });
+  }
+
+  // 4. Synthetic health columns
+  if (ENT_HEALTH_TYPES.has(entityType)) {
+    defs.push({ id: 'health_status',           label: 'Health status',             required: false, group: 'health', defaultHeader: 'health_status' });
+    defs.push({ id: 'health_comment',          label: 'Health comment',            required: false, group: 'health', defaultHeader: 'health_comment' });
+    defs.push({ id: 'health_updated_by_email', label: 'Health updated by (email)', required: false, group: 'health', defaultHeader: 'health_updated_by (email)' });
+  }
+
+  // 5. Custom UUID fields from configs
+  entityConfig.customFields.forEach((f) => {
+    defs.push({
+      id:            `custom__${f.id}`,
+      label:         f.name,
+      required:      false,
+      group:         'custom',
+      defaultHeader: `${f.name} [${f.displayType}] [${f.id}]`,
+      displayType:   f.displayType,
+    });
+  });
+
+  // 6. Relationship columns
+  defs.push(...entRelFieldDefs(entityType));
+
+  return defs;
+}
+
+// Auto-map CSV headers to internal field IDs.
+//
+// Resolution order per header (first match wins):
+//   1. Exact match on defaultHeader (template-format headers always land here)
+//   2. Case-insensitive match on defaultHeader
+//   3. Case-insensitive match on PB system field display name (e.g. "Name", "Teams")
+//   4. Alias map lookup (ENT_FIELD_ALIASES) — case-insensitive, normalised
+//   5. Custom field UUID suffix match: "Field Name [Type] [uuid]"
+function entBuildAutoMapping(entityType, csvHeaders, configs) {
+  const entityConfig = (configs && configs[entityType]) || { systemFields: [], customFields: [] };
+  const allDefs      = entGetFieldDefs(entityType, configs);
+  const validIds     = new Set(allDefs.map((d) => d.id));
+  const columns      = {};
+
+  // Lookup: exact defaultHeader → field id
+  const byDefaultHeader = {};
+  // Lookup: lowercased defaultHeader → field id
+  const byDefaultHeaderLower = {};
+  allDefs.forEach((def) => {
+    byDefaultHeader[def.defaultHeader]               = def.id;
+    byDefaultHeaderLower[def.defaultHeader.toLowerCase()] = def.id;
+  });
+
+  // Lookup: lowercased PB display name → field id (system fields only)
+  const bySystemNameLower = {};
+  entityConfig.systemFields.forEach((f) => {
+    bySystemNameLower[f.name.toLowerCase()] = f.id;
+  });
+
+  // Build inverted alias map: lowercase candidate → field id
+  // Only include fields that are valid for this entity type
+  const byAlias = {};
+  for (const [fieldId, aliases] of Object.entries(ENT_FIELD_ALIASES)) {
+    // workprogress alias key normalises away camelCase — resolve back to actual id
+    const actualId = fieldId === 'workprogress' ? 'workProgress' : fieldId;
+    if (!validIds.has(actualId)) continue;
+    for (const alias of aliases) {
+      if (!byAlias[alias]) byAlias[alias] = actualId; // first writer wins
+    }
+  }
+
+  // Lookup: custom UUID → field def id
+  const byCustomUuid = {};
+  entityConfig.customFields.forEach((f) => { byCustomUuid[f.id] = `custom__${f.id}`; });
+
+  // Track which field IDs have already been claimed so we don't double-map
+  const claimed = new Set();
+
+  csvHeaders.forEach((header) => {
+    const lc = header.toLowerCase().trim();
+
+    let match = null;
+
+    // 1. Exact defaultHeader
+    if (!match && byDefaultHeader[header])      match = byDefaultHeader[header];
+    // 2. Case-insensitive defaultHeader
+    if (!match && byDefaultHeaderLower[lc])     match = byDefaultHeaderLower[lc];
+    // 3. System field display name (case-insensitive)
+    if (!match && bySystemNameLower[lc])        match = bySystemNameLower[lc];
+    // 4. Alias map
+    if (!match && byAlias[lc])                  match = byAlias[lc];
+    // 5. Custom field UUID suffix
+    if (!match) {
+      const uuidM = header.match(/\[([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\]$/i);
+      if (uuidM && byCustomUuid[uuidM[1]])      match = byCustomUuid[uuidM[1]];
+    }
+
+    if (match && !claimed.has(match)) {
+      columns[match] = header;
+      claimed.add(match);
+    }
+  });
+
+  return { columns };
+}
+
+// Import state
+const entImport = {
+  files:     {},    // entityType → { filename, csvText, headers, rowCount, valid? }
+  configs:   null,  // loaded from GET /api/entities/configs
+  mappings:  {},    // entityType → { columns: { internalId: csvColHeader } }
+  activeTab: null,
+};
+
+function entSaveMapping(entityType) {
+  const mapping = entImport.mappings[entityType];
+  if (mapping) {
+    try { localStorage.setItem(`ent-mapping-${entityType}`, JSON.stringify(mapping)); } catch (_) {}
+  }
+}
+
+function entLoadSavedMapping(entityType) {
+  try {
+    const raw = localStorage.getItem(`ent-mapping-${entityType}`);
+    return raw ? JSON.parse(raw) : null;
+  } catch (_) { return null; }
+}
+
+// Read current mapping from the mapping table dropdowns
+function entReadMappingFromUI(entityType) {
+  const container = document.getElementById(`ent-mapping-table-${entityType}`);
+  if (!container) return entImport.mappings[entityType] || { columns: {} };
+  const columns = {};
+  container.querySelectorAll('select[data-field-id]').forEach((sel) => {
+    if (sel.value) columns[sel.dataset.fieldId] = sel.value;
+  });
+  return { columns };
+}
+
+function escHtml(str) {
+  return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+// Render the mapping table for one entity type into a container element
+function renderMappingTable(container, entityType, csvHeaders, configs, savedMapping) {
+  const defs    = entGetFieldDefs(entityType, configs);
+  const mapping = savedMapping || entBuildAutoMapping(entityType, csvHeaders, configs);
+
+  let lastGroup = null;
+  const rows = defs.map((def) => {
+    let groupHeader = '';
+    if (def.group !== lastGroup) {
+      lastGroup = def.group;
+      const labels = { tracking: 'Tracking', system: 'System fields', timeframe: 'Timeframe', health: 'Health', custom: 'Custom fields' };
+      const groupName = labels[def.group] || 'Relationships';
+      groupHeader = `<tr class="mapping-group-row"><td colspan="2" class="mapping-group-label">${groupName}</td></tr>`;
+    }
+
+    const currentVal     = (mapping.columns && mapping.columns[def.id]) || '';
+    const headerOptions  = csvHeaders.map((h) => `<option value="${escHtml(h)}"${h === currentVal ? ' selected' : ''}>${escHtml(h)}</option>`).join('');
+    const reqBadge       = def.required ? ' <span class="badge-required">required</span>' : '';
+    const typeBadge      = def.displayType ? ` <span class="ent-type-hint">${def.displayType}</span>` : '';
+
+    return `${groupHeader}<tr>
+      <td>${escHtml(def.label)}${typeBadge}${reqBadge}</td>
+      <td><select data-field-id="${escHtml(def.id)}"><option value="">(skip)</option>${headerOptions}</select></td>
+    </tr>`;
+  }).join('');
+
+  container.innerHTML = `<table class="mapping-table">
+    <thead><tr><th>PB field</th><th>CSV column</th></tr></thead>
+    <tbody>${rows}</tbody>
+  </table>`;
+
+  container.addEventListener('change', () => {
+    entImport.mappings[entityType] = entReadMappingFromUI(entityType);
+    entSaveMapping(entityType);
+  });
+}
+
+// Render tabs and active tab's mapping table
+function entRenderTabs() {
+  const tabBar  = document.getElementById('ent-import-tab-bar');
+  const content = document.getElementById('ent-import-tab-content');
+  if (!tabBar || !content) return;
+
+  const types = ENT_ORDER.filter((t) => entImport.files[t]);
+  if (!types.length) return;
+
+  if (!entImport.activeTab || !entImport.files[entImport.activeTab]) {
+    entImport.activeTab = types[0];
+  }
+
+  tabBar.innerHTML = types.map((t) => {
+    const f = entImport.files[t];
+    const pillClass = f.valid === false ? ' pill-error' : f.valid === true ? ' pill-ok' : '';
+    return `<button class="ent-tab-btn${t === entImport.activeTab ? ' active' : ''}" data-tab="${t}">
+      ${ENT_LABELS[t]}<span class="ent-tab-pill${pillClass}">${f.rowCount} rows</span>
+    </button>`;
+  }).join('');
+
+  tabBar.querySelectorAll('.ent-tab-btn').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      if (entImport.activeTab) {
+        entImport.mappings[entImport.activeTab] = entReadMappingFromUI(entImport.activeTab);
+      }
+      entImport.activeTab = btn.dataset.tab;
+      entRenderTabs();
+    });
+  });
+
+  const activeType    = entImport.activeTab;
+  const mapContainerId = `ent-mapping-table-${activeType}`;
+  const saved = entImport.mappings[activeType] || entLoadSavedMapping(activeType) || null;
+
+  content.innerHTML = `<div id="${mapContainerId}"></div>`;
+  renderMappingTable(
+    document.getElementById(mapContainerId),
+    activeType,
+    entImport.files[activeType].headers,
+    entImport.configs,
+    saved,
+  );
+  entImport.mappings[activeType] = entReadMappingFromUI(activeType);
+}
+
+// Load entity field configs from the API (cached for the session)
+async function entLoadConfigs() {
+  if (entImport.configs) return;
+  const loading = document.getElementById('ent-import-configs-loading');
+  if (loading) loading.classList.remove('hidden');
+
+  try {
+    const res = await fetch('/api/entities/configs', { headers: buildHeaders() });
+    if (res.ok) {
+      entImport.configs = await res.json();
+    } else {
+      console.warn('entity configs fetch failed:', res.status);
+    }
+  } catch (e) {
+    console.warn('entity configs error:', e.message);
+  } finally {
+    if (loading) loading.classList.add('hidden');
+  }
+}
+
+// Show/hide the mapping and options panels when files are loaded.
+// The log panel (#ent-import-step-log) is only shown when import starts.
+function entUpdatePanelVisibility() {
+  const hasFiles = Object.keys(entImport.files).length > 0;
+  ['ent-import-step-map', 'ent-import-step-options'].forEach((id) => {
+    const el = document.getElementById(id);
+    if (el) el.classList.toggle('hidden', !hasFiles);
+  });
+
+  if (hasFiles) {
+    entCheckParentWarning();
+    entRenderTabs();
+  }
+}
+
+// Warn if a required parent entity type is not uploaded
+function entCheckParentWarning() {
+  const warnEl  = document.getElementById('ent-import-parent-warn');
+  const warnMsg = document.getElementById('ent-import-parent-warn-msg');
+  if (!warnEl || !warnMsg) return;
+
+  const uploaded = new Set(Object.keys(entImport.files));
+  const missing  = [];
+
+  if ((uploaded.has('component') || uploaded.has('feature')) && !uploaded.has('product') && !uploaded.has('component')) {
+    missing.push('Upload Products or Components for parent resolution, or use existing pb_id/ext_key values');
+  }
+  if (uploaded.has('subfeature') && !uploaded.has('feature')) {
+    missing.push('Subfeatures → upload Features too, or use existing feature pb_id/ext_key in parent_feat_ext_key');
+  }
+  if (uploaded.has('keyResult') && !uploaded.has('objective')) {
+    missing.push('Key Results → upload Objectives too, or use existing objective pb_id/ext_key in parent_obj_ext_key');
+  }
+  if (uploaded.has('release') && !uploaded.has('releaseGroup')) {
+    missing.push('Releases → upload Release Groups too, or use existing releaseGroup pb_id/ext_key in parent_rlgr_ext_key');
+  }
+
+  if (missing.length) {
+    warnMsg.innerHTML = 'Missing parent files:<ul>' + missing.map((m) => `<li>${escHtml(m)}</li>`).join('') + '</ul>';
+    warnEl.classList.remove('hidden');
+  } else {
+    warnEl.classList.add('hidden');
+  }
+}
+
+// Handle a file selection/drop for an entity type
+async function entHandleFile(entityType, file) {
+  const tile = document.getElementById(`ent-tile-${entityType}`);
+  if (tile) {
+    tile.querySelector('.ent-tile-status').textContent = 'Reading…';
+    tile.classList.add('has-file');
+  }
+
+  const csvText = await file.text();
+
+  // Quick row count + header parse (client-side, for UI display)
+  const clean    = csvText.replace(/^\uFEFF/, '').trim();
+  const lines    = clean.split('\n');
+  const rowCount = Math.max(0, lines.length - 1);
+  // Parse header row respecting quoted commas
+  const headerLine = (lines[0] || '').replace(/\r/g, '');
+  const headers = headerLine.split(/,(?=(?:[^"]*"[^"]*")*[^"]*$)/)
+    .map((h) => h.replace(/^"|"$/g, '').trim());
+
+  entImport.files[entityType] = { filename: file.name, csvText, headers, rowCount };
+
+  if (tile) {
+    tile.querySelector('.ent-tile-status').textContent = `${file.name} · ${rowCount.toLocaleString()} rows`;
+    tile.querySelector('.ent-tile-remove').classList.remove('hidden');
+  }
+
+  // Load configs on first file drop (requires token), then auto-map
+  if (!entImport.configs) {
+    requireToken(async () => {
+      await entLoadConfigs();
+      // Re-map ALL uploaded files now that configs are available
+      Object.entries(entImport.files).forEach(([type, f]) => {
+        const persisted = entLoadSavedMapping(type);
+        const auto = entBuildAutoMapping(type, f.headers, entImport.configs);
+        entImport.mappings[type] = persisted
+          ? { columns: { ...auto.columns, ...persisted.columns } }
+          : auto;
+      });
+      entUpdatePanelVisibility();
+    });
+  } else {
+    // Configs already loaded — auto-map immediately
+    const saved = entLoadSavedMapping(entityType);
+    const auto  = entBuildAutoMapping(entityType, headers, entImport.configs);
+    entImport.mappings[entityType] = saved
+      ? { columns: { ...auto.columns, ...saved.columns } }
+      : auto;
+    entUpdatePanelVisibility();
+  }
+}
+
+function entRemoveFile(entityType) {
+  delete entImport.files[entityType];
+  delete entImport.mappings[entityType];
+
+  const tile = document.getElementById(`ent-tile-${entityType}`);
+  if (tile) {
+    tile.classList.remove('has-file');
+    tile.querySelector('.ent-tile-status').textContent = 'No file selected';
+    tile.querySelector('.ent-tile-remove').classList.add('hidden');
+  }
+
+  if (entImport.activeTab === entityType) {
+    const remaining = ENT_ORDER.filter((t) => entImport.files[t]);
+    entImport.activeTab = remaining[0] || null;
+  }
+
+  entUpdatePanelVisibility();
+}
+
+// Initialize the 9-tile file picker grid
+function initEntitiesImportView() {
+  const grid = document.getElementById('ent-import-file-grid');
+  if (!grid || grid.dataset.init) return;
+  grid.dataset.init = '1';
+
+  grid.innerHTML = ENT_ORDER.map((type) => `
+    <div class="ent-file-tile" id="ent-tile-${type}">
+      <div class="ent-tile-header">
+        <span class="ent-tile-name">${ENT_LABELS[type]}</span>
+        <button class="ent-tile-remove hidden" data-remove="${type}" title="Remove">✕</button>
+      </div>
+      <div class="ent-tile-drop" data-drop="${type}">
+        <span class="ent-tile-icon">📄</span>
+        <span class="ent-tile-status">No file selected</span>
+      </div>
+      <input type="file" accept=".csv,text/csv" class="hidden" id="ent-file-input-${type}" />
+    </div>
+  `).join('');
+
+  ENT_ORDER.forEach((type) => {
+    const dropZone  = grid.querySelector(`[data-drop="${type}"]`);
+    const fileInput = document.getElementById(`ent-file-input-${type}`);
+
+    dropZone.addEventListener('click', () => fileInput.click());
+    fileInput.addEventListener('change', () => {
+      if (fileInput.files[0]) entHandleFile(type, fileInput.files[0]);
+      fileInput.value = '';
+    });
+    dropZone.addEventListener('dragover',  (e) => { e.preventDefault(); dropZone.classList.add('drag-over'); });
+    dropZone.addEventListener('dragleave', ()  => dropZone.classList.remove('drag-over'));
+    dropZone.addEventListener('drop', (e) => {
+      e.preventDefault();
+      dropZone.classList.remove('drag-over');
+      if (e.dataTransfer.files[0]) entHandleFile(type, e.dataTransfer.files[0]);
+    });
+  });
+
+  grid.addEventListener('click', (e) => {
+    const btn = e.target.closest('[data-remove]');
+    if (btn) { e.stopPropagation(); entRemoveFile(btn.dataset.remove); }
+  });
+
+  // Auto-generate ext_keys toggle
+  const autogenCb = document.getElementById('ent-autogen-extkeys');
+  const wsWrap    = document.getElementById('ent-workspace-code-wrap');
+  if (autogenCb && wsWrap) {
+    autogenCb.addEventListener('change', () => wsWrap.classList.toggle('hidden', !autogenCb.checked));
+  }
+}
+
+// Build /preview request body from current state
+function entBuildPreviewPayload() {
+  if (entImport.activeTab) {
+    entImport.mappings[entImport.activeTab] = entReadMappingFromUI(entImport.activeTab);
+  }
+  const files    = {};
+  const mappings = {};
+  Object.entries(entImport.files).forEach(([type, f]) => {
+    files[type]    = { filename: f.filename, csvText: f.csvText };
+    mappings[type] = entImport.mappings[type] || { columns: {} };
+  });
+  const msMode = document.querySelector('input[name="ent-ms-mode"]:checked');
+  return {
+    files,
+    mappings,
+    options: {
+      multiSelectMode:          msMode ? msMode.value : 'set',
+      bypassEmptyCells:         document.getElementById('ent-bypass-empty')?.checked  || false,
+      bypassHtmlFormatter:      document.getElementById('ent-bypass-html')?.checked   || false,
+      fiscal_year_start_month:  parseInt(document.getElementById('ent-fiscal-month')?.value || '1', 10),
+      autoGenerateExtKeys:      document.getElementById('ent-autogen-extkeys')?.checked || false,
+      workspaceCode:            (document.getElementById('ent-workspace-code')?.value || '').trim().toUpperCase(),
+    },
+  };
+}
+
+async function runEntityValidation() {
+  const btn      = document.getElementById('btn-ent-validate');
+  const statusEl = document.getElementById('ent-validate-status');
+  if (!btn || !Object.keys(entImport.files).length) return;
+
+  btn.disabled = true;
+  if (statusEl) statusEl.textContent = 'Validating…';
+  document.getElementById('ent-validate-results')?.classList.add('hidden');
+
+  try {
+    const payload = entBuildPreviewPayload();
+    const res = await fetch('/api/entities/preview', {
+      method: 'POST',
+      headers: { ...buildHeaders(), 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+    renderValidationResults(data);
+  } catch (e) {
+    if (statusEl) statusEl.textContent = `Error: ${e.message}`;
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function renderValidationResults(data) {
+  const summaryEl  = document.getElementById('ent-validate-summary-alert');
+  const panelsEl   = document.getElementById('ent-validate-error-panels');
+  const resultsEl  = document.getElementById('ent-validate-results');
+  const statusEl   = document.getElementById('ent-validate-status');
+  if (!resultsEl) return;
+
+  const allResults = data.results || {};
+  let totalErrors = 0, totalWarnings = 0;
+  Object.values(allResults).forEach((r) => {
+    totalErrors   += (r.errors   || []).length;
+    totalWarnings += (r.warnings || []).length;
+  });
+
+  // Stamp validation state on in-memory files (used by tab pills)
+  Object.entries(allResults).forEach(([type, r]) => {
+    if (entImport.files[type]) entImport.files[type].valid = (r.errors || []).length === 0;
+  });
+  entRenderTabs();
+
+  if (data.valid) {
+    const counts = ENT_ORDER.filter((t) => allResults[t])
+      .map((t) => `${(allResults[t].rowCount || 0).toLocaleString()} ${ENT_LABELS[t]}`).join(', ');
+    summaryEl.innerHTML = `<div class="alert alert-ok"><span class="alert-icon">✅</span><span>All rows valid — ${counts}. Ready to import.</span></div>`;
+    if (statusEl) statusEl.textContent = 'Validation passed';
+  } else {
+    summaryEl.innerHTML = `<div class="alert alert-error"><span class="alert-icon">❌</span><span>${totalErrors} error${totalErrors !== 1 ? 's' : ''}${totalWarnings ? ` · ${totalWarnings} warning${totalWarnings !== 1 ? 's' : ''}` : ''} — fix before importing.</span></div>`;
+    if (statusEl) statusEl.textContent = `${totalErrors} error${totalErrors !== 1 ? 's' : ''}`;
+  }
+
+  panelsEl.innerHTML = ENT_ORDER
+    .filter((t) => allResults[t] && ((allResults[t].errors || []).length || (allResults[t].warnings || []).length))
+    .map((type) => {
+      const r = allResults[type];
+      const rows = [
+        ...(r.errors   || []).map((e) => `<tr><td>${e.row || '—'}</td><td class="col-tag">${escHtml(e.field || '')}</td><td style="color:var(--c-danger)">${escHtml(e.message)}</td></tr>`),
+        ...(r.warnings || []).map((w) => `<tr><td>${w.row || '—'}</td><td class="col-tag">${escHtml(w.field || '')}</td><td style="color:var(--c-warn)">${escHtml(w.message)}</td></tr>`),
+      ].join('');
+      const errCount  = (r.errors   || []).length;
+      const warnCount = (r.warnings || []).length;
+      return `<div class="ent-error-panel mt-12">
+        <div class="ent-error-panel-title">${ENT_LABELS[type]} — ${errCount} error${errCount !== 1 ? 's' : ''}${warnCount ? ` · ${warnCount} warning${warnCount !== 1 ? 's' : ''}` : ''}</div>
+        <table class="mapping-table"><thead><tr><th>Row</th><th>Field</th><th>Message</th></tr></thead><tbody>${rows}</tbody></table>
+      </div>`;
+    }).join('');
+
+  resultsEl.classList.remove('hidden');
+}
+
+// ── Import run ────────────────────────────────────────────
+
+let entImportCtrl = null; // AbortController for in-flight import SSE
+
+// Log appender for entities import — bound to entities log DOM IDs.
+// Uses shared makeLogAppender() defined in app.js (loaded first, same page scope).
+// Entities SSE events include detail.entityType; we append it as a suffix to message.
+const _entLogAppendBase = makeLogAppender('ent-import-log', 'ent-import-log-entries', 'ent-import-log-counts');
+function entImportAppendLog(level, message, detail) {
+  // Append [entityType] suffix when present so user can distinguish types in the log
+  const entitySuffix = detail && typeof detail === 'object' && detail.entityType
+    ? ` [${detail.entityType}]` : '';
+  _entLogAppendBase({ level, message: message + entitySuffix, ts: detail?.ts });
+}
+// Expose reset/getCounts for entImportSetRunning and stop handler
+entImportAppendLog.reset     = () => _entLogAppendBase.reset();
+entImportAppendLog.getCounts = () => _entLogAppendBase.getCounts();
+
+function entImportSetRunning(running) {
+  const btnRun      = document.getElementById('btn-ent-run');
+  const btnStop     = document.getElementById('btn-ent-stop');
+  const btnValidate = document.getElementById('btn-ent-validate');
+  const btnFixRels  = document.getElementById('btn-ent-fix-rels');
+  if (btnRun)      btnRun.disabled      = running;
+  if (btnStop)     btnStop.classList.toggle('hidden', !running);
+  if (btnValidate) btnValidate.disabled = running;
+  if (btnFixRels && running) btnFixRels.classList.add('hidden');
+
+  if (running) {
+    // Reset log for fresh run (fixes innerHTML='' bug — only clears entries, not DOM structure)
+    entImportAppendLog.reset();
+    // Hide validate results, error, and previous summary; show log panel
+    document.getElementById('ent-validate-results')?.classList.add('hidden');
+    document.getElementById('ent-import-error')?.classList.add('hidden');
+    document.getElementById('ent-import-summary-box')?.classList.add('hidden');
+    // Show the log panel and restore progress track
+    document.getElementById('ent-import-step-log')?.classList.remove('hidden');
+    document.getElementById('ent-import-progress-track')?.classList.remove('hidden');
+    document.getElementById('ent-import-status')?.classList.remove('hidden');
+    entImportSetProgress(0, '');
+    setText('ent-import-run-title', 'Importing…');
+  } else {
+    // After import: hide progress bar + status; keep log panel + log visible for review
+    document.getElementById('ent-import-progress-track')?.classList.add('hidden');
+    document.getElementById('ent-import-status')?.classList.add('hidden');
+  }
+}
+
+function entImportSetProgress(pct, msg) {
+  const bar = document.getElementById('ent-import-progress-bar');
+  if (bar) bar.style.width = `${Math.min(100, pct)}%`;
+  const status = document.getElementById('ent-import-status');
+  if (status) status.textContent = msg || '';
+}
+
+function entImportShowError(msg) {
+  // Show error in the alert banner
+  const el    = document.getElementById('ent-import-error');
+  const msgEl = document.getElementById('ent-import-error-msg');
+  if (el && msgEl) { msgEl.textContent = msg; el.classList.remove('hidden'); }
+  // Also append the fatal error to the log so it's visible in context
+  entImportAppendLog('error', msg);
+  // Update run title
+  setText('ent-import-run-title', 'Import failed');
+}
+
+function entImportShowComplete(data) {
+  const summaryEl = document.getElementById('ent-import-summary-box');
+  if (!summaryEl) return;
+
+  const { perEntity = [], totalCreated = 0, totalUpdated = 0, totalErrors = 0,
+          stopped, relationCounts, newIdsCsv } = data;
+
+  const { parentLinks = 0, relationshipLinks = 0 } = relationCounts || {};
+
+  // Per-entity breakdown table
+  const rows = perEntity.map((e) =>
+    `<tr><td>${ENT_LABELS[e.entityType] || e.entityType}</td>` +
+    `<td>${e.created}</td><td>${e.updated}</td><td>${e.errors}</td></tr>`
+  ).join('');
+
+  let extraHtml = '';
+  if (rows) {
+    extraHtml += `<table class="mapping-table mt-12">
+      <thead><tr><th>Entity type</th><th>Created</th><th>Updated</th><th>Errors</th></tr></thead>
+      <tbody>${rows}</tbody></table>`;
+  }
+  if (newIdsCsv) {
+    extraHtml += `<div class="mt-8">
+      <button class="btn btn-ghost btn-sm" id="btn-ent-import-download-ids">
+        ⬇ Download new ext_keys CSV
+      </button></div>`;
+  }
+
+  // Use shared renderImportComplete for styled alert-ok/warn summary + extra table
+  renderImportComplete(summaryEl, {
+    created:   totalCreated,
+    updated:   totalUpdated,
+    errors:    totalErrors,
+    stopped,
+    extraText: `${parentLinks} parent links · ${relationshipLinks} connected links`,
+    extraHtml,
+  });
+
+  if (newIdsCsv) {
+    document.getElementById('btn-ent-import-download-ids')?.addEventListener('click', () => {
+      const blob = new Blob([newIdsCsv], { type: 'text/csv' });
+      const date = new Date().toISOString().slice(0, 10);
+      triggerDownload(blob, `new-ext-keys-${date}.csv`);
+    });
+  }
+
+  setText('ent-import-run-title', stopped ? 'Import stopped' : 'Import complete');
+  // Show fix-relationships button
+  document.getElementById('btn-ent-fix-rels')?.classList.remove('hidden');
+}
+
+function runEntityImport() {
+  if (!Object.keys(entImport.files).length) return;
+  const payload = entBuildPreviewPayload();
+  entImportSetRunning(true);
+  entImportCtrl = subscribeSSE('/api/entities/run', payload, {
+    onProgress: ({ message, percent }) => entImportSetProgress(percent || 0, message || ''),
+    onLog:      (e) => entImportAppendLog(e.level, e.message, e),
+    onComplete: (data) => { entImportSetRunning(false); entImportShowComplete(data); },
+    onError:    (msg) => { entImportSetRunning(false); entImportShowError(msg); },
+    onAbort:    () => {
+      entImportAppendLog('warn', 'Import stopped by user');
+      entImportSetRunning(false);
+      const c = entImportAppendLog.getCounts();
+      renderImportComplete(document.getElementById('ent-import-summary-box'), {
+        stopped: true, created: 0, updated: 0,
+        errors: c.error, extraText: `${c.success} rows processed`,
+      });
+      setText('ent-import-run-title', 'Import stopped');
+    },
+  });
+}
+
+function runEntityFixRelationships() {
+  if (!Object.keys(entImport.files).length) return;
+  const payload = entBuildPreviewPayload();
+  document.getElementById('btn-ent-fix-rels')?.classList.add('hidden');
+  entImportSetRunning(true);
+  entImportCtrl = subscribeSSE('/api/entities/relationships', payload, {
+    onProgress: ({ message, percent }) => entImportSetProgress(percent || 0, message || ''),
+    onLog:      (e) => entImportAppendLog(e.level, e.message, e),
+    onComplete: (data) => { entImportSetRunning(false); entImportShowComplete(data); },
+    onError:    (msg) => { entImportSetRunning(false); entImportShowError(msg); },
+    onAbort:    () => {
+      entImportAppendLog('warn', 'Import stopped by user');
+      entImportSetRunning(false);
+    },
+  });
+}
+
+// ── Export view ───────────────────────────────────────────
+
+let entExportCtrl = null; // AbortController for in-flight export SSE
+
+function entExportMigrationMode() {
+  return document.getElementById('ent-export-migration-mode')?.checked || false;
+}
+
+function entExportWorkspaceCode() {
+  return (document.getElementById('ent-export-workspace-code')?.value || '').trim().toUpperCase();
+}
+
+function entExportSetRunning(running) {
+  const btn = document.getElementById('btn-ent-export-selected');
+  if (btn) btn.disabled = running || (entExportGetSelected().length === 0);
+}
+
+function entExportShowProgress(visible) {
+  const wrap = document.getElementById('ent-export-progress-wrap');
+  if (wrap) wrap.classList.toggle('hidden', !visible);
+}
+
+function entExportSetProgress(pct, msg) {
+  const bar = document.getElementById('ent-export-progress-bar');
+  if (bar) bar.style.width = `${Math.min(100, pct)}%`;
+  const status = document.getElementById('ent-export-status');
+  if (status) status.textContent = msg || '';
+}
+
+function entExportShowError(msg) {
+  const el = document.getElementById('ent-export-error');
+  const msgEl = document.getElementById('ent-export-error-msg');
+  if (el && msgEl) { msgEl.textContent = msg; el.classList.remove('hidden'); }
+}
+
+function entExportHideError() {
+  const el = document.getElementById('ent-export-error');
+  if (el) el.classList.add('hidden');
+}
+
+function entExportAppendLog(level, message) {
+  const log = document.getElementById('ent-export-log');
+  if (!log) return;
+  log.classList.remove('hidden');
+  const entry = document.createElement('div');
+  entry.className = `log-entry log-${level}`;
+  entry.textContent = message;
+  log.appendChild(entry);
+  log.scrollTop = log.scrollHeight;
+}
+
+function entExportClearLog() {
+  const log = document.getElementById('ent-export-log');
+  if (log) { log.innerHTML = ''; log.classList.add('hidden'); }
+}
+
+/**
+ * Get the currently checked entity types from the checkbox grid.
+ */
+function entExportGetSelected() {
+  const grid = document.getElementById('ent-export-checkboxes');
+  if (!grid) return [];
+  return [...grid.querySelectorAll('input[type=checkbox]:checked')]
+    .map((cb) => cb.dataset.exportType);
+}
+
+/**
+ * Run export for selected entity types via export-all SSE.
+ * Returns a plain CSV for single type; ZIP for multiple.
+ */
+function runEntityExportSelected(types) {
+  if (!token) { requireToken(() => runEntityExportSelected(types)); return; }
+
+  const migMode = entExportMigrationMode();
+  const wsCode  = entExportWorkspaceCode();
+
+  if (migMode && !wsCode) {
+    entExportShowProgress(false);
+    entExportClearLog();
+    entExportShowError('Enter a workspace code to use migration mode.');
+    document.getElementById('ent-export-workspace-code')?.focus();
+    return;
+  }
+
+  entExportHideError();
+  entExportClearLog();
+  entExportShowProgress(true);
+  entExportSetProgress(0, 'Starting export…');
+  entExportSetRunning(true);
+
+  entExportCtrl = subscribeSSE(
+    '/api/entities/export-all',
+    { migrationMode: migMode, workspaceCode: wsCode, types },
+    {
+      onProgress: ({ message, percent }) => entExportSetProgress(percent || 0, message),
+      onLog: (entry) => entExportAppendLog(entry.level, entry.message),
+      onComplete: (data) => {
+        if (data.csv) {
+          // Single type — plain CSV
+          const count = data.count || 0;
+          entExportSetProgress(100, `Done — ${count} entities exported.`);
+          entExportSetRunning(false);
+          const blob = new Blob([data.csv], { type: 'text/csv;charset=utf-8;' });
+          triggerDownload(blob, data.filename || `export.csv`);
+        } else if (data.zipBase64) {
+          // Multiple types — ZIP
+          const total = data.totalEntities || 0;
+          entExportSetProgress(100, `Done — ${total} total entities exported.`);
+          entExportSetRunning(false);
+          const binary = atob(data.zipBase64);
+          const bytes = new Uint8Array(binary.length);
+          for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+          const blob = new Blob([bytes], { type: 'application/zip' });
+          triggerDownload(blob, data.filename || `pbtoolkit-entities-export.zip`);
+        }
+      },
+      onError: (msg) => {
+        entExportSetRunning(false);
+        entExportSetProgress(0, '');
+        entExportShowError(msg || 'Export failed');
+      },
+      onAbort: () => {
+        entExportSetRunning(false);
+        entExportSetProgress(0, '');
+      },
+    }
+  );
+}
+
+/**
+ * Build the checkbox export grid and wire up normalize-keys-multi.
+ */
+function initEntitiesExportView() {
+  // ── Checkbox export grid ──────────────────────────────────
+
+  const checkGrid = document.getElementById('ent-export-checkboxes');
+  const btnSelected = document.getElementById('btn-ent-export-selected');
+
+  if (checkGrid) {
+    ENT_ORDER.forEach((type) => {
+      const label = document.createElement('label');
+      label.className = 'checkbox-row';
+      label.innerHTML = `<input type="checkbox" data-export-type="${type}" checked />${ENT_LABELS[type]}`;
+      checkGrid.appendChild(label);
+    });
+
+    const updateExportBtn = () => {
+      if (btnSelected) btnSelected.disabled = entExportGetSelected().length === 0;
+    };
+
+    document.getElementById('btn-ent-export-select-all')?.addEventListener('click', () => {
+      checkGrid.querySelectorAll('input').forEach((cb) => { cb.checked = true; });
+      updateExportBtn();
+    });
+    document.getElementById('btn-ent-export-clear-all')?.addEventListener('click', () => {
+      checkGrid.querySelectorAll('input').forEach((cb) => { cb.checked = false; });
+      updateExportBtn();
+    });
+    checkGrid.addEventListener('change', updateExportBtn);
+    updateExportBtn(); // sync initial state (all pre-checked)
+  }
+
+  if (btnSelected) {
+    btnSelected.addEventListener('click', () => {
+      const selected = entExportGetSelected();
+      if (!selected.length) return;
+      runEntityExportSelected(selected);
+    });
+  }
+
+  // Tab switching
+  document.getElementById('ent-export-tab-bar')?.addEventListener('click', (e) => {
+    const btn = e.target.closest('[data-export-tab]');
+    if (!btn) return;
+    const tab = btn.dataset.exportTab;
+    document.querySelectorAll('#ent-export-tab-bar .ent-tab-btn').forEach((b) => b.classList.toggle('active', b === btn));
+    document.getElementById('ent-export-tab-export').classList.toggle('hidden', tab !== 'export');
+    document.getElementById('ent-export-tab-normalize').classList.toggle('hidden', tab !== 'normalize');
+  });
+
+  // Migration mode toggle — show/hide workspace code field
+  const migToggle = document.getElementById('ent-export-migration-mode');
+  const wsRow     = document.getElementById('ent-export-workspace-row');
+  if (migToggle) {
+    migToggle.addEventListener('change', () => {
+      wsRow?.classList.toggle('hidden', !migToggle.checked);
+    });
+  }
+
+  // ── Multi-file normalize-keys ─────────────────────────────
+
+  const normGrid    = document.getElementById('ent-norm-multi-grid');
+  const normRunBtn  = document.getElementById('btn-ent-norm-multi-run');
+  const normError   = document.getElementById('ent-norm-multi-error');
+  const normErrMsg  = document.getElementById('ent-norm-multi-error-msg');
+  const normFiles   = {}; // entityType → csvText
+
+  const showNormErr = (m) => {
+    if (normError && normErrMsg) { normErrMsg.textContent = m; normError.classList.remove('hidden'); }
+  };
+  const hideNormErr = () => normError?.classList.add('hidden');
+
+  function updateNormRunBtn() {
+    const wsCode = (document.getElementById('ent-norm-multi-workspace')?.value || '').trim();
+    if (normRunBtn) normRunBtn.disabled = !wsCode || Object.keys(normFiles).length === 0;
+  }
+
+  document.getElementById('ent-norm-multi-workspace')?.addEventListener('input', updateNormRunBtn);
+
+  if (normGrid) {
+    ENT_ORDER.forEach((type) => {
+      const tile = document.createElement('div');
+      tile.className = 'ent-file-tile';
+      tile.id = `ent-norm-tile-${type}`;
+      tile.innerHTML = `
+        <div class="ent-tile-header">
+          <span class="ent-tile-name">${ENT_LABELS[type]}</span>
+          <button class="ent-tile-remove hidden" data-norm-remove="${type}" title="Remove">✕</button>
+        </div>
+        <div class="ent-tile-drop" data-norm-drop="${type}">
+          <span class="ent-tile-icon">📄</span>
+          <span class="ent-tile-status">No file selected</span>
+        </div>
+        <input type="file" accept=".csv,text/csv" class="hidden" id="ent-norm-file-${type}" />
+      `;
+      normGrid.appendChild(tile);
+
+      const dropZone  = tile.querySelector(`[data-norm-drop="${type}"]`);
+      const fileInput = document.getElementById(`ent-norm-file-${type}`);
+      const statusEl  = tile.querySelector('.ent-tile-status');
+      const removeBtn = tile.querySelector(`[data-norm-remove="${type}"]`);
+
+      const loadFile = (file) => {
+        if (!file) return;
+        statusEl.textContent = 'Reading…';
+        tile.classList.add('has-file');
+        const reader = new FileReader();
+        reader.onload = (ev) => {
+          normFiles[type] = ev.target.result;
+          statusEl.textContent = file.name;
+          removeBtn.classList.remove('hidden');
+          updateNormRunBtn();
+        };
+        reader.readAsText(file);
+      };
+
+      dropZone.addEventListener('click', () => fileInput.click());
+      fileInput.addEventListener('change', () => { if (fileInput.files[0]) loadFile(fileInput.files[0]); fileInput.value = ''; });
+      dropZone.addEventListener('dragover',  (e) => { e.preventDefault(); dropZone.classList.add('drag-over'); });
+      dropZone.addEventListener('dragleave', ()  => dropZone.classList.remove('drag-over'));
+      dropZone.addEventListener('drop', (e) => {
+        e.preventDefault();
+        dropZone.classList.remove('drag-over');
+        if (e.dataTransfer.files[0]) loadFile(e.dataTransfer.files[0]);
+      });
+      removeBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        delete normFiles[type];
+        tile.classList.remove('has-file');
+        statusEl.textContent = 'No file selected';
+        removeBtn.classList.add('hidden');
+        updateNormRunBtn();
+      });
+    });
+  }
+
+  if (normRunBtn) {
+    normRunBtn.addEventListener('click', async () => {
+      const wsCode = (document.getElementById('ent-norm-multi-workspace')?.value || '').trim();
+      if (!wsCode || !Object.keys(normFiles).length) return;
+
+      hideNormErr();
+      normRunBtn.disabled = true;
+      normRunBtn.textContent = 'Normalizing…';
+
+      const files = {};
+      Object.entries(normFiles).forEach(([t, csvText]) => { files[t] = { csvText }; });
+
+      try {
+        const res = await fetch('/api/entities/normalize-keys-multi', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ files, workspaceCode: wsCode }),
+        });
+        const json = await res.json();
+        if (!res.ok) { showNormErr(json.error || `Failed (${res.status})`); return; }
+
+        const binary = atob(json.zipBase64);
+        const bytes  = new Uint8Array(binary.length);
+        for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+        const blob = new Blob([bytes], { type: 'application/zip' });
+        triggerDownload(blob, json.filename || 'pbtoolkit-normalized.zip');
+      } catch (e) {
+        showNormErr(e.message || 'Request failed');
+      } finally {
+        normRunBtn.textContent = 'Normalize & download ZIP';
+        updateNormRunBtn();
+      }
+    });
+  }
+}
+
+// ── Navigation ────────────────────────────────────────────
+
+function setupEntitiesNav() {
+  const navMap = {
+    'nav-entities-templates':     'entities-templates',
+    'nav-entities-export':        'entities-export',
+    'nav-entities-import':        'entities-import',
+    'nav-entities-relationships': 'entities-relationships',
+    'nav-entities-migration':     'entities-migration',
+  };
+
+  Object.entries(navMap).forEach(([btnId, viewName]) => {
+    const btn = document.getElementById(btnId);
+    if (!btn) return;
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.nav-item').forEach((b) => b.classList.remove('active'));
+      btn.classList.add('active');
+      showView(viewName);
+    });
+  });
+}
+
+// ── Event listeners ───────────────────────────────────────
+
+document.addEventListener('DOMContentLoaded', () => {
+  initEntitiesTemplatesView();
+  initEntitiesImportView();
+  setupEntitiesNav();
+
+  // Templates: download selected button
+  const btnTemplatesDownload = document.getElementById('btn-ent-templates-download');
+  if (btnTemplatesDownload) btnTemplatesDownload.addEventListener('click', downloadSelectedTemplates);
+
+  // Import: Validate button
+  const btnValidate = document.getElementById('btn-ent-validate');
+  if (btnValidate) {
+    btnValidate.addEventListener('click', () => requireToken(runEntityValidation));
+  }
+
+  // Import: Run import button
+  const btnRun = document.getElementById('btn-ent-run');
+  if (btnRun) {
+    btnRun.addEventListener('click', () => requireToken(runEntityImport));
+  }
+
+  // Import: Stop button
+  const btnStop = document.getElementById('btn-ent-stop');
+  if (btnStop) {
+    btnStop.addEventListener('click', () => entImportCtrl?.abort());
+  }
+
+  // Import: Fix relationships button
+  const btnFixRels = document.getElementById('btn-ent-fix-rels');
+  if (btnFixRels) {
+    btnFixRels.addEventListener('click', () => requireToken(runEntityFixRelationships));
+  }
+
+  initEntitiesExportView();
+});
