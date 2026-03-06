@@ -40,9 +40,10 @@ function applyMapping(csvRows, entityType, mapping) {
     for (const [internalId, csvHeader] of Object.entries(cols)) {
       normalized[internalId] = cell(csvRow, csvHeader);
     }
-    // Always read pb_id and ext_key from their canonical CSV column names
-    normalized._pbId   = cell(csvRow, 'pb_id');
-    normalized._extKey = cell(csvRow, 'ext_key');
+    // Always read pb_id and ext_key from their canonical CSV column names,
+    // falling back to the mapped value if the column is named differently (e.g. entity_uuid → pb_id).
+    normalized._pbId   = cell(csvRow, 'pb_id')   || normalized['pb_id']   || '';
+    normalized._extKey = cell(csvRow, 'ext_key') || normalized['ext_key'] || '';
     // Relationship columns may not be in the mapping if user left them unmapped;
     // try to read them directly by their canonical column name as a fallback.
     const relCols = [
