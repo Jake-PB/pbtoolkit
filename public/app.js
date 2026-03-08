@@ -87,6 +87,7 @@ function boot() {
 
 // ── "PB Tools" home button ─────────────────────────────────
 $('btn-home').addEventListener('click', () => showScreen('home'));
+$('btn-back-home').addEventListener('click', () => showScreen('home'));
 
 // ── DC toggle ──────────────────────────────────────────────
 $('dc-us').addEventListener('click', () => switchDatacenter(false));
