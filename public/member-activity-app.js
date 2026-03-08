@@ -104,7 +104,7 @@
   }
 
   function getSelectedRoles() {
-    return ['admin', 'maker', 'viewer', 'contributor'].filter(
+    return ['admin', 'maker', 'contributor', 'viewer'].filter(
       (role) => ma$(`ma-role-${role}`) && ma$(`ma-role-${role}`).checked
     );
   }
@@ -247,6 +247,26 @@
 
     // Team search
     wireTeamSearch();
+
+    // Role select/deselect all
+    ma$('btn-ma-roles-select-all').addEventListener('click', () => {
+      ['admin', 'maker', 'contributor', 'viewer'].forEach((r) => { ma$(`ma-role-${r}`).checked = true; });
+    });
+    ma$('btn-ma-roles-deselect-all').addEventListener('click', () => {
+      ['admin', 'maker', 'contributor', 'viewer'].forEach((r) => { ma$(`ma-role-${r}`).checked = false; });
+    });
+
+    // Team select/deselect all (operates on visible checkboxes to respect search filter)
+    ma$('btn-ma-teams-select-all').addEventListener('click', () => {
+      ma$('ma-team-list').querySelectorAll('input[type="checkbox"]').forEach((cb) => {
+        if (cb.closest('label').style.display !== 'none') cb.checked = true;
+      });
+    });
+    ma$('btn-ma-teams-deselect-all').addEventListener('click', () => {
+      ma$('ma-team-list').querySelectorAll('input[type="checkbox"]').forEach((cb) => {
+        if (cb.closest('label').style.display !== 'none') cb.checked = false;
+      });
+    });
 
     // Buttons
     ma$('btn-ma-export').addEventListener('click', () => requireToken(startMaExport));

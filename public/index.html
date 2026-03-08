@@ -1043,8 +1043,8 @@
                 <div class="text-sm text-muted mb-16" style="font-weight:600;text-transform:uppercase;letter-spacing:.05em">Select entity types to download</div>
                 <div id="ent-templates-checkboxes" class="ent-export-check-grid"></div>
                 <div class="mt-8 flex gap-8">
-                  <button id="btn-ent-templates-select-all" class="btn btn-ghost btn-sm">Select all</button>
-                  <button id="btn-ent-templates-clear-all"  class="btn btn-ghost btn-sm">Clear all</button>
+                  <button id="btn-ent-templates-select-all" class="btn btn-ghost btn-xs">Select all</button>
+                  <button id="btn-ent-templates-clear-all"  class="btn btn-ghost btn-xs">Deselect all</button>
                 </div>
               </div>
 
@@ -1100,8 +1100,8 @@
                   </div>
                   <div id="ent-export-checkboxes" class="ent-export-check-grid"></div>
                   <div class="mt-8 flex gap-8">
-                    <button id="btn-ent-export-select-all" class="btn btn-ghost btn-sm">Select all</button>
-                    <button id="btn-ent-export-clear-all"  class="btn btn-ghost btn-sm">Clear all</button>
+                    <button id="btn-ent-export-select-all" class="btn btn-ghost btn-xs">Select all</button>
+                    <button id="btn-ent-export-clear-all"  class="btn btn-ghost btn-xs">Deselect all</button>
                   </div>
                 </div>
 
@@ -1330,12 +1330,16 @@
 
                 <!-- Role filter -->
                 <div class="form-row" style="margin-bottom:16px;">
-                  <label class="form-label">Roles</label>
+                  <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">
+                    <label class="form-label" style="margin:0;">Roles</label>
+                    <button id="btn-ma-roles-select-all"   class="btn btn-xs btn-ghost" type="button">Select all</button>
+                    <button id="btn-ma-roles-deselect-all" class="btn btn-xs btn-ghost" type="button">Deselect all</button>
+                  </div>
                   <div style="display:flex;flex-wrap:wrap;gap:12px;margin-top:4px;">
                     <label class="checkbox-label"><input type="checkbox" id="ma-role-admin"       checked> Admin</label>
                     <label class="checkbox-label"><input type="checkbox" id="ma-role-maker"       checked> Maker</label>
-                    <label class="checkbox-label"><input type="checkbox" id="ma-role-viewer"      checked> Viewer</label>
                     <label class="checkbox-label"><input type="checkbox" id="ma-role-contributor" checked> Contributor</label>
+                    <label class="checkbox-label"><input type="checkbox" id="ma-role-viewer"      checked> Viewer</label>
                   </div>
                 </div>
 
@@ -1344,6 +1348,8 @@
                   <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px;">
                     <label class="form-label" style="margin:0;">Teams</label>
                     <span class="info-icon" data-tip="Team assignments reflect current state in Productboard, not the member's team at the time of the activity.">i</span>
+                    <button id="btn-ma-teams-select-all"   class="btn btn-xs btn-ghost" type="button">Select all</button>
+                    <button id="btn-ma-teams-deselect-all" class="btn btn-xs btn-ghost" type="button">Deselect all</button>
                     <button id="btn-ma-refresh" class="btn btn-xs btn-ghost" style="margin-left:auto;" type="button">↺ Refresh data</button>
                   </div>
                   <input type="text" id="ma-team-search" class="form-input" placeholder="Search teams…" style="margin-bottom:6px;" />
