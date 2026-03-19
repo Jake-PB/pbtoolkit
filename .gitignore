@@ -1,8 +1,10 @@
 node_modules/
 .env
+claude.env
 *.log
 .DS_Store
 .claude/
 CLAUDE.md
-openapi v2 public API/
 implementation_notes/
+openapi v2 public API/
+plan*

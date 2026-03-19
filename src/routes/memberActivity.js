@@ -8,9 +8,11 @@
  */
 
 const express = require('express');
-const { createClient } = require('../lib/pbClient');
+const { extractCursor } = require('../lib/pbClient');
 const { generateCSVFromColumns } = require('../lib/csvUtils');
 const { startSSE } = require('../lib/sse');
+const { pbAuth } = require('../middleware/pbAuth');
+const { parseApiError } = require('../lib/errorUtils');
 
 const router = express.Router();
 
@@ -116,6 +118,11 @@ async function buildCache(token, fetchAllPages, pbFetch, onProgress = () => {}) 
         }
       })
     );
+    // Wait between batches even though pbClient.js has adaptive rate limiting.
+    // All 5 calls in a batch fire concurrently via Promise.all, so rate-limit
+    // response headers from one batch aren't visible to the next batch's requests
+    // until after they've already started. The delay is a safety margin for the
+    // parallel-batch pattern specifically; it is not redundant with the sequential limiter.
     if (i + BATCH < teamIds.length) await sleep(BATCH_DELAY_MS);
   }
 
@@ -129,11 +136,9 @@ async function buildCache(token, fetchAllPages, pbFetch, onProgress = () => {}) 
 // GET /api/member-activity/metadata
 // ---------------------------------------------------------------------------
 
-router.get('/metadata', async (req, res) => {
-  const token = req.headers['x-pb-token'];
-  const useEu  = req.headers['x-pb-eu'] === 'true';
-
-  if (!token) return res.status(400).json({ error: 'Missing x-pb-token header' });
+router.get('/metadata', pbAuth, async (req, res) => {
+  const token = req.headers['x-pb-token']; // used as session cache key
+  const { fetchAllPages, pbFetch } = res.locals.pbClient;
 
   const refresh = req.query.refresh === 'true';
   if (refresh) sessionCache.delete(token);
@@ -141,7 +146,6 @@ router.get('/metadata', async (req, res) => {
   try {
     let entry = sessionCache.get(token);
     if (isCacheStale(entry)) {
-      const { fetchAllPages, pbFetch } = createClient(token, useEu);
       entry = await buildCache(token, fetchAllPages, pbFetch);
     }
 
@@ -237,6 +241,13 @@ const RAW_COLS = [
   ...COUNT_COLS,
 ];
 
+/** Returns an object with every COUNT_COLS key set to 0. */
+function createZeroCountFields() {
+  const fields = {};
+  for (const col of COUNT_COLS) fields[col.key] = 0;
+  return fields;
+}
+
 // ---------------------------------------------------------------------------
 // Filter helpers
 // ---------------------------------------------------------------------------
@@ -269,11 +280,9 @@ function filterByActiveState(rows, mode, outputMode) {
 // POST /api/member-activity/export  (SSE)
 // ---------------------------------------------------------------------------
 
-router.post('/export', async (req, res) => {
-  const token = req.headers['x-pb-token'];
-  const useEu  = req.headers['x-pb-eu'] === 'true';
-
-  if (!token) return res.status(400).json({ error: 'Missing x-pb-token header' });
+router.post('/export', pbAuth, async (req, res) => {
+  const token = req.headers['x-pb-token']; // used as session cache key
+  const { pbFetch, withRetry, fetchAllPages } = res.locals.pbClient;
 
   const {
     dateFrom,
@@ -294,11 +303,8 @@ router.post('/export', async (req, res) => {
   }
 
   const sse = startSSE(res);
-  let aborted = false;
-  res.on('close', () => { aborted = true; });
 
   try {
-    const { pbFetch, withRetry, fetchAllPages } = createClient(token, useEu);
 
     // Step 1: Ensure cache is ready (0–20%)
     let entry = sessionCache.get(token);
@@ -312,7 +318,7 @@ router.post('/export', async (req, res) => {
       sse.progress('Using cached workspace data.', 20);
     }
 
-    if (aborted) return;
+    if (sse.isAborted()) return;
 
     const { members, memberTeams, teams } = entry;
 
@@ -325,34 +331,28 @@ router.post('/export', async (req, res) => {
     const filterTeams = teamIds.length > 0;
 
     // Step 2: Fetch analytics (20–80%)
+    // Progress uses an asymptotic curve between 25–79% since total pages are unknown.
+    // pct(page) = 25 + 55 * (1 - 1/(1 + page*0.6)) — moves fast at first, slows near 80%.
+    function analyticsPct(pagesLoaded) {
+      return Math.round(25 + 55 * (1 - 1 / (1 + pagesLoaded * 0.6)));
+    }
+
     sse.progress('Fetching member activity data…', 25);
 
-    // ── WORKAROUND: PB analytics API bug (reported to engineering) ────────────
-    // The analytics endpoint's links.next has two bugs:
-    //   1. Returns a relative path ("/member-activities?...") instead of an absolute URL
-    //   2. Strips the /v2/analytics/ prefix — path should be /v2/analytics/member-activities
-    // Because of this we cannot use fetchAllPages() directly (it follows links.next as-is).
-    // Instead we extract pageCursor from links.next and rebuild the correct URL each page.
-    //
-    // TODO: Once engineering fixes the links.next URL, replace this entire block with:
-    //   analyticsRecords = await fetchAllPages(
-    //     `/v2/analytics/member-activities?dateFrom=${dateFrom}&dateTo=${dateTo}&limit=1000`,
-    //     'fetch member activities'
-    //   );
-    // ──────────────────────────────────────────────────────────────────────────
+    // links.next only contains pageCursor — it omits dateFrom, dateTo, and limit.
+    // We extract the cursor and rebuild the full path to preserve those params.
     let analyticsRecords = [];
     try {
       let nextPath = `/v2/analytics/member-activities?dateFrom=${dateFrom}&dateTo=${dateTo}&limit=1000`;
+      let pagesLoaded = 0;
       while (nextPath) {
         const r = await withRetry(() => pbFetch('get', nextPath), 'fetch member activities');
         if (r.data?.length) analyticsRecords.push(...r.data);
-        if (r.links?.next) {
-          // WORKAROUND: parse the broken relative URL with a dummy base, then extract
-          // just the pageCursor to reconstruct the correct absolute path ourselves.
-          const cursor = new URL(r.links.next, 'https://x').searchParams.get('pageCursor');
-          nextPath = cursor
-            ? `/v2/analytics/member-activities?dateFrom=${dateFrom}&dateTo=${dateTo}&pageCursor=${cursor}&limit=1000`
-            : null;
+        pagesLoaded++;
+        const cursor = extractCursor(r.links?.next);
+        if (cursor) {
+          nextPath = `/v2/analytics/member-activities?dateFrom=${dateFrom}&dateTo=${dateTo}&pageCursor=${cursor}&limit=1000`;
+          sse.progress(`Fetching activity data… (${analyticsRecords.length.toLocaleString()} records)`, analyticsPct(pagesLoaded));
         } else {
           nextPath = null;
         }
@@ -366,9 +366,9 @@ router.post('/export', async (req, res) => {
       throw err;
     }
 
-    sse.progress(`Fetched ${analyticsRecords.length} activity records.`, 80);
+    sse.progress(`Fetched ${analyticsRecords.length.toLocaleString()} activity records.`, 80);
 
-    if (aborted) return;
+    if (sse.isAborted()) return;
 
     // Step 3: Aggregate / build rows (80–90%)
     sse.progress('Processing data…', 82);
@@ -382,21 +382,7 @@ router.post('/export', async (req, res) => {
       for (const rec of analyticsRecords) {
         const { memberId } = rec;
         if (!totals.has(memberId)) {
-          totals.set(memberId, {
-            memberId,
-            activeDaysCount: 0,
-            boardCreatedCount: 0, boardOpenedCount: 0,
-            featureCreatedCount: 0, subfeatureCreatedCount: 0,
-            componentCreatedCount: 0, productCreatedCount: 0,
-            noteCreatedCount: 0, noteStateChangedCount: 0,
-            insightCreatedCount: 0,
-            gridBoardCreatedCount: 0, timelineBoardCreatedCount: 0,
-            insightsBoardCreatedCount: 0, documentBoardCreatedCount: 0,
-            columnBoardCreatedCount: 0,
-            gridBoardOpenedCount: 0, timelineBoardOpenedCount: 0,
-            insightsBoardOpenedCount: 0, documentBoardOpenedCount: 0,
-            columnBoardOpenedCount: 0,
-          });
+          totals.set(memberId, { memberId, activeDaysCount: 0, ...createZeroCountFields() });
         }
         const t = totals.get(memberId);
         if (rec.activeFlag) t.activeDaysCount++;
@@ -409,21 +395,7 @@ router.post('/export', async (req, res) => {
       if (includeZeroActivity) {
         for (const [memberId] of members) {
           if (!totals.has(memberId)) {
-            totals.set(memberId, {
-              memberId,
-              activeDaysCount: 0,
-              boardCreatedCount: 0, boardOpenedCount: 0,
-              featureCreatedCount: 0, subfeatureCreatedCount: 0,
-              componentCreatedCount: 0, productCreatedCount: 0,
-              noteCreatedCount: 0, noteStateChangedCount: 0,
-              insightCreatedCount: 0,
-              gridBoardCreatedCount: 0, timelineBoardCreatedCount: 0,
-              insightsBoardCreatedCount: 0, documentBoardCreatedCount: 0,
-              columnBoardCreatedCount: 0,
-              gridBoardOpenedCount: 0, timelineBoardOpenedCount: 0,
-              insightsBoardOpenedCount: 0, documentBoardOpenedCount: 0,
-              columnBoardOpenedCount: 0,
-            });
+            totals.set(memberId, { memberId, activeDaysCount: 0, ...createZeroCountFields() });
           }
         }
       }
@@ -504,29 +476,16 @@ router.post('/export', async (req, res) => {
             role: profile.role, teams: teamNames.join(', '),
             activeFlag: false,
             totalViewEvents: 0, totalEditEvents: 0,
-            boardCreatedCount: 0, boardOpenedCount: 0,
-            featureCreatedCount: 0, subfeatureCreatedCount: 0,
-            componentCreatedCount: 0, productCreatedCount: 0,
-            noteCreatedCount: 0, noteStateChangedCount: 0,
-            insightCreatedCount: 0,
-            gridBoardCreatedCount: 0, timelineBoardCreatedCount: 0,
-            insightsBoardCreatedCount: 0, documentBoardCreatedCount: 0,
-            columnBoardCreatedCount: 0,
-            gridBoardOpenedCount: 0, timelineBoardOpenedCount: 0,
-            insightsBoardOpenedCount: 0, documentBoardOpenedCount: 0,
-            columnBoardOpenedCount: 0,
+            ...createZeroCountFields(),
           });
         }
       }
     }
 
-    // Empty result check (after padding)
-    if (rows.length === 0) {
-      sse.error('No activity data found for this date range. Try a different date range or check that the analytics API is active for your workspace.');
-      return;
-    }
+    if (sse.isAborted()) return;
 
-    if (aborted) return;
+    // Track whether zero rows came from the date range or from filters, for the completion message.
+    const hadDataBeforeFilters = rows.length > 0;
 
     // Step 4: Apply client-side filters (90%)
     sse.progress('Applying filters…', 90);
@@ -546,17 +505,12 @@ router.post('/export', async (req, res) => {
 
     rows = filterByActiveState(rows, activeFilter, rawMode ? 'raw' : 'summary');
 
-    if (rows.length === 0) {
-      sse.error('No members match the selected filters. Try adjusting your filter criteria.');
-      return;
-    }
+    if (sse.isAborted()) return;
 
-    if (aborted) return;
-
-    // Step 5: Build CSV (95%)
+    // Step 5: Build CSV (95%) — skip if no rows
     sse.progress('Building CSV…', 95);
     const colDefs = rawMode ? RAW_COLS : SUMMARY_COLS;
-    const csv = generateCSVFromColumns(rows, colDefs);
+    const csv = rows.length > 0 ? generateCSVFromColumns(rows, colDefs) : null;
 
     // Zero-activity paid-seat alert count
     const zeroActivityPaidCount = rawMode
@@ -569,11 +523,16 @@ router.post('/export', async (req, res) => {
     const filename = buildFilename(dateFrom, dateTo, roles, teamIds, teams, activeFilter, rawMode);
 
     sse.progress('Done!', 100);
-    sse.complete({ csv, filename, count: rows.length, zeroActivityPaidCount });
+    const zeroMessage = rows.length === 0
+      ? (hadDataBeforeFilters
+          ? 'No members match the selected filters. Try adjusting your filter criteria.'
+          : 'No activity data found for this date range. Try a different date range.')
+      : null;
+    sse.complete({ csv, filename, count: rows.length, zeroActivityPaidCount, zeroMessage });
 
   } catch (err) {
     console.error('member-activity export error:', err.message);
-    sse.error(err.message || 'Export failed. Please try again.');
+    sse.error(parseApiError(err));
   } finally {
     sse.done();
   }
@@ -603,6 +562,9 @@ function buildFilename(dateFrom, dateTo, roles, teamIds, teamsMap, activeFilter,
   if (activeFilter === 'inactive') name += '_inactive';
   if (rawMode) name += '_raw';
 
+  // Cap stem at 200 chars to stay well under the 255-byte OS filename limit.
+  if (name.length > 200) name = name.slice(0, 200);
+
   return `${name}.csv`;
 }
 
@@ -611,3 +573,13 @@ function slugify(str) {
 }
 
 module.exports = router;
+
+// Named exports for unit testing (additive — does not affect Express router behaviour)
+module.exports.createZeroCountFields = createZeroCountFields;
+module.exports.isCacheStale          = isCacheStale;
+module.exports.filterByRole          = filterByRole;
+module.exports.filterByActiveState   = filterByActiveState;
+module.exports.buildFilename         = buildFilename;
+module.exports.buildCache            = buildCache;
+module.exports.COUNT_COLS            = COUNT_COLS;
+module.exports.CACHE_TTL_MS          = CACHE_TTL_MS;

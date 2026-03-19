@@ -40,15 +40,17 @@ function applyMapping(csvRows, entityType, mapping) {
     for (const [internalId, csvHeader] of Object.entries(cols)) {
       normalized[internalId] = cell(csvRow, csvHeader);
     }
-    // Always read pb_id and ext_key from their canonical CSV column names,
-    // falling back to the mapped value if the column is named differently (e.g. entity_uuid → pb_id).
-    normalized._pbId   = cell(csvRow, 'pb_id')   || normalized['pb_id']   || '';
-    normalized._extKey = cell(csvRow, 'ext_key') || normalized['ext_key'] || '';
+    // Read pb_id / ext_key only when the user actually mapped them.
+    // When a field is set to "(skip)" the frontend omits it from cols entirely.
+    // Falling back to the raw CSV column would silently trigger PATCH instead of POST.
+    normalized._pbId   = ('pb_id'   in cols) ? (cell(csvRow, cols['pb_id'])   || '') : '';
+    normalized._extKey = ('ext_key' in cols) ? (cell(csvRow, cols['ext_key']) || '') : '';
     // Relationship columns may not be in the mapping if user left them unmapped;
     // try to read them directly by their canonical column name as a fallback.
     const relCols = [
       'parent_ext_key', 'parent_feat_ext_key', 'parent_obj_ext_key', 'parent_rlgr_ext_key',
       'connected_rels_ext_key', 'connected_objs_ext_key', 'connected_inis_ext_key',
+      'blocked_by_ext_key', 'blocking_ext_key',
     ];
     for (const rc of relCols) {
       if (normalized[rc] === undefined) {
@@ -186,17 +188,17 @@ function buildFieldsObject(normalizedRow, entityType, config, options, op) {
     }
   }
 
-  // --- teams / team ---
-  if (SINGULAR_TEAM_TYPES.has(entityType)) {
-    const teamVal = normalizedRow['teams'] || normalizedRow['team'] || '';
-    if (!skip(teamVal) && teamVal) {
-      const items = teamVal.split(',').map((s) => ({ name: _sanitizeTeamName(s) })).filter((t) => t.name);
-      if (items.length) F.team = items.slice(0, 1);
-    }
-  } else {
+  // --- teams ---
+  // Objectives use field key 'team' (singular) in both GET responses and write payloads;
+  // all other entity types use 'teams' (plural). Objectives also only accept one team.
+  {
     const teamsVal = normalizedRow['teams'] || normalizedRow['team'] || '';
     if (!skip(teamsVal) && teamsVal) {
-      F.teams = teamsVal.split(',').map((s) => ({ name: _sanitizeTeamName(s) })).filter((t) => t.name);
+      const items = teamsVal.split(',').map((s) => ({ name: _sanitizeTeamName(s) })).filter((t) => t.name);
+      if (items.length) {
+        const isObjective = SINGULAR_TEAM_TYPES.has(entityType);
+        F[isObjective ? 'team' : 'teams'] = isObjective ? items.slice(0, 1) : items;
+      }
     }
   }
 
@@ -451,7 +453,7 @@ function _indexConfigById(config) {
 
 function _sanitizeTeamName(name) {
   if (name == null) return '';
-  return String(name).trim().replace(/^[^A-Za-z0-9]+/, '').trim();
+  return String(name).trim();
 }
 
 module.exports = {

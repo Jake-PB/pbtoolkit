@@ -8,17 +8,28 @@ Reference for adding and maintaining modules in PBToolkit.
 
 ```
 pbtoolkit/
+├── test/                      # server-side tests (supertest)
+│   ├── TESTING-GUIDE.md       # manual QA checklist
+│   ├── companies.delete.test.js
+│   ├── companies.export.test.js
+│   ├── companies.fields.test.js
+│   ├── companies.import.test.js
+│   ├── entities.dependencies.test.js
+│   ├── entities.validator.test.js
+│   ├── notes-import.test.js
+│   └── utils.test.js
 ├── src/
 │   ├── server.js              # Express entry point — mounts all routers
 │   ├── lib/
 │   │   ├── pbClient.js        # Productboard API client
 │   │   ├── csvUtils.js        # papaparse wrappers
-│   │   └── sse.js             # Server-Sent Events helper
+│   │   ├── sse.js             # Server-Sent Events helper
+│   │   ├── constants.js       # shared constants: UUID_RE
+│   │   └── errorUtils.js      # shared helpers: parseApiError()
+│   ├── middleware/
+│   │   └── pbAuth.js          # token validation + pbClient injection
 │   └── routes/
-│       ├── fields.js          # GET  /api/fields
-│       ├── export.js          # POST /api/export
-│       ├── import.js          # POST /api/import/preview + /run
-│       ├── companies.js       # GET/POST /api/companies/*
+│       ├── companies.js       # GET /api/fields + POST /api/export + POST /api/import/* + POST /api/companies/* (unified)
 │       ├── notes.js           # POST /api/notes/* (export, import, delete, migrate)
 │       ├── entities.js        # GET/POST /api/entities/* (templates, configs, preview, normalize-keys)
 │       └── memberActivity.js  # GET /api/member-activity/metadata + POST /api/member-activity/export (SSE)
@@ -94,21 +105,19 @@ Supported variables (documented in `.env.example`):
 
 ### 1. Backend route file — `src/routes/{module}.js`
 
+**Preferred pattern** — use `pbAuth` middleware (token validation + client injection):
+
 ```js
 const express = require('express');
-const { createClient } = require('../lib/pbClient');
+const { pbAuth } = require('../middleware/pbAuth');
 const { startSSE } = require('../lib/sse');
 
 const router = express.Router();
 
-router.post('/run', async (req, res) => {
-  const token = req.headers['x-pb-token'];
-  const useEu  = req.headers['x-pb-eu'] === 'true';
-  if (!token) return res.status(400).json({ error: 'Missing x-pb-token header' });
+router.post('/run', pbAuth, async (req, res) => {
+  const { pbFetch, withRetry } = res.locals.pbClient;
 
   const sse = startSSE(res);
-  const { pbFetch, withRetry } = createClient(token, useEu);
-
   try {
     // ... work ...
     sse.complete({ ... });
@@ -120,6 +129,16 @@ router.post('/run', async (req, res) => {
 });
 
 module.exports = router;
+```
+
+All routes now use `pbAuth` — the legacy manual token extraction migration is complete. The old pattern (for reference only — do not use):
+
+```js
+// Legacy pattern (do not copy — all routes now use pbAuth middleware)
+const token = req.headers['x-pb-token'];
+const useEu  = req.headers['x-pb-eu'] === 'true';
+if (!token) return res.status(400).json({ error: 'Missing x-pb-token header' });
+const { pbFetch, withRetry } = createClient(token, useEu);
 ```
 
 ### 2. Register in `src/server.js`
@@ -219,7 +238,8 @@ The frontend sends them via `buildHeaders()` in `app.js`.
 
 | Method | Body shape |
 |---|---|
-| POST (create) | `pbFetch('post', '/resource', body)` — the client sends body as-is; Productboard does NOT require a `data` wrapper on create calls |
+| POST v1 (create) | `pbFetch('post', '/resource', body)` — v1 endpoints (e.g. `POST /notes`) send body directly, no wrapper |
+| POST v2 (create) | `pbFetch('post', '/v2/entities', { data: { type, fields, metadata? } })` — v2 entity creates use a `data` wrapper with `type` + `fields` |
 | PATCH (update) | `pbFetch('patch', '/resource/id', { data: body })` — **must** wrap in `data` |
 | PUT (custom field value) | `pbFetch('put', '/companies/{id}/custom-fields/{fid}/value', { data: { type, value } })` |
 | DELETE (clear value) | `pbFetch('delete', '/resource')` — no body |
@@ -228,7 +248,7 @@ The frontend sends them via `buildHeaders()` in `app.js`.
 
 ### Pagination
 
-All list endpoints use offset pagination. The pattern:
+**v1 endpoints** use offset pagination. The pattern:
 
 ```js
 let offset = 0;
@@ -273,7 +293,7 @@ function parseApiError(err) {
 }
 ```
 
-This helper lives in `import.js` and `importCoordinator.js` (copied). If a third caller is needed, extract it to `src/lib/parseApiError.js` and require from both.
+This helper lives in `src/lib/errorUtils.js` — import with `const { parseApiError } = require('../lib/errorUtils')`.
 
 ### 404 on field value endpoints
 
@@ -435,11 +455,63 @@ New component classes added in `style.css` for the entities Import view:
 
 ---
 
+## Frontend UX conventions
+
+### Export completion messages
+
+All export done messages follow this format:
+
+```
+Exported {N} {noun}. Download started.
+```
+
+- Count is always formatted with `.toLocaleString()` (locale-aware thousands separators).
+- Noun is the human-readable item type: `companies`, `notes`, `rows` (member activity), or the
+  entity-type label from `ENT_LABELS` (e.g. `Features`, `Components`).
+- Multi-type entity ZIP: `Exported {N} entities across all selected types. Download started.`
+
+### Mapping persistence (localStorage)
+
+All field mapping configurations persist across page reloads using `localStorage`:
+
+| Module | Key | Format |
+|---|---|---|
+| Companies | `companies-mapping` | `{ pbIdColumn, nameColumn, domainColumn, descColumn, sourceOriginCol, sourceRecordCol, customFields: [{ csvColumn, fieldId, fieldType }] }` |
+| Entities | `ent-mapping-{entityType}` | `{ columns: { fieldId: csvHeader } }` |
+
+Saved mappings override auto-detect. Values are restored silently — if a saved column header no
+longer exists in the current CSV, the select stays at `(⇢ skip)`. Mappings persist across token
+disconnects (they map CSV column names, not token-specific data).
+
+Notes mapping persists to `localStorage` under key `notes-mapping` (same pattern as companies).
+
+### Filename conventions
+
+- **Date-only**: `YYYY-MM-DD` (from `new Date().toISOString().slice(0, 10)`)
+- **Datetime**: `YYYY-MM-DD-HHmm` (from `nowStamp()` in `entities.js`)
+- **Filename stem length**: capped at 200 chars max (full filename ≤ 204 chars), well under the
+  255-byte OS limit. Member activity filenames apply this cap because team/role slugs can grow long.
+
+Examples:
+```
+companies-2026-03-15.csv
+notes-export-2026-03-01-to-2026-03-14.csv
+feature-export-2026-03-15.csv
+pbtoolkit-entities-export-2026-03-15-1430.zip
+pb-member-activity_2026-03-01_2026-03-14_role-maker_team-frontend.csv
+```
+
+---
+
 ## Known quirks and gotchas
 
-- **`createCompany` does not wrap in `data`** — the POST to `/companies` sends the body directly (not `{ data: body }`). This is an intentional inconsistency in the PB API; PATCH requires `{ data: ... }` but POST does not. Verify for each new resource type before assuming the wrapper is always needed.
+- **v2 POST uses a `data` wrapper** — `POST /v2/entities` sends `{ data: { type: 'company', fields, metadata? } }`. The v1 `/companies` endpoint did not need the wrapper, but v2 does. Verify body shape for each new resource type.
 
-- **Domain is immutable after creation** — `patchCompany` intentionally does not send `domain` or `source` fields because the API ignores or rejects changes to these after the company is created.
+- **v2 list/search returns domain under a UUID key, single GET normalises to `"domain"`** — `GET /v2/entities?type[]=company` returns domain in `fields[<workspace-UUID>]`; `GET /v2/entities/{id}` returns it in `fields.domain`. This discrepancy is a PB bug. `buildDomainCache` in `companies.js` does a UUID discovery GET to work around it — see the "Domain cache" section above.
+
+- **V1 and v2 company lists are separate** — `GET /companies` (v1) only returns companies that were originally created via v1. Companies created via `POST /v2/entities` (including all PBToolkit-imported companies) do not appear in v1 and can only be retrieved via `GET /v2/entities?type[]=company`.
+
+- **Source fields are v2 `metadata.source`** — `sourceOriginCol` maps to `metadata.source.externalSystemName` and `sourceRecordCol` to `metadata.source.externalRecordId`. The v1 `source.origin`/`source.record_id` fields are separate and are not written by the import. Export includes both v1 and v2 source columns (v1 columns are marked as deprecated in the CSV header).
 
 - **`parseCSVHeaders` in `app.js` is a naive implementation** — it splits on `,` and strips quotes. It is only used to populate the mapping dropdowns; the actual parsing for import uses `papaparse` on the server. If headers contain quoted commas, the frontend display may be slightly off but the import will still be correct.
 
@@ -455,21 +527,39 @@ New component classes added in `style.css` for the entities Import view:
 
 ## Companies module — API reference
 
-Companies logic is split across **two route files**:
+All companies logic lives in **one unified route file** (`src/routes/companies.js`), mounted at `/api`:
 
-| File | Routes | Purpose |
-|---|---|---|
-| `src/routes/import.js` | `POST /api/import/preview`, `POST /api/import/run` | Create/patch companies + custom fields (SSE) |
-| `src/routes/companies.js` | `POST /api/companies/delete/by-csv`, `POST /api/companies/delete/all` | Delete companies (SSE) |
+| Routes | Purpose |
+|---|---|
+| `GET /api/fields` | Custom field definitions |
+| `POST /api/export` | Export all companies as CSV (SSE) |
+| `POST /api/import/preview`, `POST /api/import/run` | Create/patch companies + custom fields (SSE) |
+| `POST /api/companies/delete/by-csv`, `POST /api/companies/delete/all` | Delete companies (SSE) |
 
-### import.js — create/patch pipeline
+### Import (create/patch pipeline)
 
-`POST /api/import/run` processes each CSV row:
-1. **pb_id present** → `PATCH /companies/{id}` (name, description only — domain/source are immutable after creation)
-2. **domain match found** → same PATCH by looked-up UUID
-3. **neither** → `POST /companies` to create
+`POST /api/import/run` processes each CSV row via the v2 API:
+1. **pb_id present** → `PATCH /v2/entities/{id}` — all standard fields as patch ops + `metadata.source` if source columns are mapped
+2. **domain match found** → same `PATCH /v2/entities/{id}` by UUID from domain cache
+3. **neither** → `POST /v2/entities` — all fields (name, domain, description, custom fields) inline in the request body + `metadata.source`
 
-After the standard field write, `importCustomFields()` fires one `PUT /companies/{id}/custom-fields/{fid}/value` per mapped custom field. If the cell is empty and `clearEmptyFields` is enabled, it fires `DELETE` instead (404s swallowed — means value was already empty).
+Custom fields and standard fields are included in the same v2 create/patch call — no separate per-field calls. Source fields (`sourceOriginCol` → `metadata.source.externalSystemName`, `sourceRecordCol` → `metadata.source.externalRecordId`) are written via v2 metadata at creation/update time.
+
+### Domain cache (`buildDomainCache`)
+
+Builds a `{ 'domain.com' → companyUUID }` map before import runs, used for step 2 above.
+
+**Why v2 list, not v1:** Companies created via `POST /v2/entities` (PBToolkit import) do NOT appear in v1 `GET /companies` — v1 and v2 have separate company lists. A v1-only cache misses all PBToolkit-imported companies.
+
+**Known PB quirk — UUID domain field key:** `GET /v2/entities?type[]=company` returns domain under a workspace-specific UUID key (e.g. `b37b798e-e827-4b91-8faa-0b298189cdbe`), not the string `"domain"`. `GET /v2/entities/{id}` (single-entity GET) always normalises it to `fields.domain`. The UUID is not in the config endpoint response and varies per workspace.
+
+**Workaround (current implementation):**
+1. Fetch all companies via `GET /v2/entities?type[]=company` (cursor-paginated via `fetchAllPages`)
+2. Pick the first company that has a domain value; call `GET /v2/entities/{id}` on it to get its `fields.domain` value
+3. Cross-reference that value against the UUID-keyed fields in the list entity to identify the workspace-specific domain field key
+4. Use that key to read domains from all remaining list entities
+
+> **TODO**: once PB fixes the domain field key inconsistency in list/search responses (so `"domain"` string key is returned consistently), remove the individual GET discovery loop and read domain directly from `entity.fields.domain` in the list response.
 
 Mapping shape:
 ```js
@@ -488,8 +578,8 @@ Mapping shape:
 
 ### companies.js — delete pipeline
 
-- **by-csv**: parses UUID column from uploaded CSV, deletes each UUID via `DELETE /companies/{id}`. 404s warned and skipped.
-- **delete-all**: paginates `GET /companies` to collect all IDs, then deletes sequentially. 404s counted as success.
+- **by-csv**: parses UUID column from uploaded CSV, deletes each UUID via `DELETE /v2/entities/{id}`. 404s warned and skipped.
+- **delete-all**: paginates `GET /companies` (v1) to collect all IDs, then deletes via `DELETE /v2/entities/{id}`. 404s counted as success.
 
 ---
 

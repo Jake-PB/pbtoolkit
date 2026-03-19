@@ -27,8 +27,11 @@ const archiver = require('archiver');
 const { PassThrough } = require('stream');
 const Papa = require('papaparse');
 
-const { createClient } = require('../lib/pbClient');
 const { startSSE } = require('../lib/sse');
+const { UUID_RE } = require('../lib/constants');
+const { parseCSV, cell } = require('../lib/csvUtils');
+const { parseApiError } = require('../lib/errorUtils');
+const { pbAuth } = require('../middleware/pbAuth');
 const { fetchEntityConfigs } = require('../services/entities/configCache');
 const { ENTITY_ORDER, ENTITY_LABELS, SYSTEM_FIELD_ORDER, TYPE_CODE, syntheticColumns, relationshipColumns } = require('../services/entities/meta');
 const { parseEntityCsv } = require('../services/entities/csvParser');
@@ -88,13 +91,13 @@ function buildTemplateCsv(entityType, configs) {
 }
 
 /**
- * Format current timestamp as YYYYMMDD-HHmm for filenames.
+ * Format current timestamp as YYYY-MM-DD-HHmm for filenames.
  */
 function nowStamp() {
   const d = new Date();
   const pad = (n) => String(n).padStart(2, '0');
   return (
-    `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}` +
+    `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}` +
     `-${pad(d.getHours())}${pad(d.getMinutes())}`
   );
 }
@@ -103,17 +106,13 @@ function nowStamp() {
 // GET /templates/:type  — single entity template CSV
 // ---------------------------------------------------------------------------
 
-router.get('/templates/:type', async (req, res) => {
-  const token = req.headers['x-pb-token'];
-  const useEu  = req.headers['x-pb-eu'] === 'true';
-  if (!token) return res.status(400).json({ error: 'Missing x-pb-token header' });
+router.get('/templates/:type', pbAuth, async (req, res) => {
+  const { pbFetch, withRetry } = res.locals.pbClient;
 
   const { type } = req.params;
   if (!ENTITY_ORDER.includes(type)) {
     return res.status(400).json({ error: `Unknown entity type: ${type}. Valid types: ${ENTITY_ORDER.join(', ')}` });
   }
-
-  const { pbFetch, withRetry } = createClient(token, useEu);
 
   try {
     const configs = await fetchEntityConfigs(pbFetch, withRetry);
@@ -132,10 +131,8 @@ router.get('/templates/:type', async (req, res) => {
 // GET /templates.zip  — ZIP of all entity templates
 // ---------------------------------------------------------------------------
 
-router.get('/templates.zip', async (req, res) => {
-  const token = req.headers['x-pb-token'];
-  const useEu  = req.headers['x-pb-eu'] === 'true';
-  if (!token) return res.status(400).json({ error: 'Missing x-pb-token header' });
+router.get('/templates.zip', pbAuth, async (req, res) => {
+  const { pbFetch, withRetry } = res.locals.pbClient;
 
   // Optional ?types=objective,keyResult filter; defaults to all types
   let typesToInclude = ENTITY_ORDER;
@@ -147,8 +144,6 @@ router.get('/templates.zip', async (req, res) => {
     }
     typesToInclude = ENTITY_ORDER.filter((t) => requested.includes(t));
   }
-
-  const { pbFetch, withRetry } = createClient(token, useEu);
 
   try {
     const configs = await fetchEntityConfigs(pbFetch, withRetry);
@@ -186,18 +181,14 @@ router.get('/templates.zip', async (req, res) => {
 // GET /configs  — entity field configs as JSON (for mapping UI)
 // ---------------------------------------------------------------------------
 
-router.get('/configs', async (req, res) => {
-  const token = req.headers['x-pb-token'];
-  const useEu  = req.headers['x-pb-eu'] === 'true';
-  if (!token) return res.status(400).json({ error: 'Missing x-pb-token header' });
-
-  const { pbFetch, withRetry } = createClient(token, useEu);
+router.get('/configs', pbAuth, async (req, res) => {
+  const { pbFetch, withRetry } = res.locals.pbClient;
   try {
     const configs = await fetchEntityConfigs(pbFetch, withRetry);
     res.json(configs);
   } catch (err) {
     console.error('entities/configs:', err.message);
-    res.status(500).json({ error: err.message });
+    res.status(err.status || 500).json({ error: parseApiError(err) });
   }
 });
 
@@ -259,8 +250,6 @@ router.post('/preview', (req, res) => {
 // POST /normalize-keys  — pure CSV transform; rewrite UUID ext_keys → WSID-TYPE-NNN
 // ---------------------------------------------------------------------------
 
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
 router.post('/normalize-keys', (req, res) => {
   const { csvText, entityType, workspaceCode } = req.body;
   if (!csvText)      return res.status(400).json({ error: 'Missing csvText' });
@@ -296,10 +285,8 @@ router.post('/normalize-keys', (req, res) => {
 // POST /export/:type  — export one entity type as CSV (SSE)
 // ---------------------------------------------------------------------------
 
-router.post('/export/:type', async (req, res) => {
-  const token = req.headers['x-pb-token'];
-  const useEu  = req.headers['x-pb-eu'] === 'true';
-  if (!token) return res.status(400).json({ error: 'Missing x-pb-token header' });
+router.post('/export/:type', pbAuth, async (req, res) => {
+  const { pbFetch, withRetry } = res.locals.pbClient;
 
   const { type } = req.params;
   if (!ENTITY_ORDER.includes(type)) {
@@ -313,7 +300,6 @@ router.post('/export/:type', async (req, res) => {
   }
 
   const sse = startSSE(res);
-  const { pbFetch, withRetry } = createClient(token, useEu);
 
   try {
     sse.progress(`Fetching ${ENTITY_LABELS[type] || type} configuration…`, 5);
@@ -342,15 +328,14 @@ router.post('/export/:type', async (req, res) => {
     }
 
     sse.progress('Generating CSV…', migrationMode ? 92 : 85);
-    const csv = rowsToCsv(headers, finalRows);
-
     const date = new Date().toISOString().slice(0, 10);
     const filename = `${type}-export-${date}.csv`;
+    const csv = finalRows.length > 0 ? rowsToCsv(headers, finalRows) : null;
 
     sse.complete({ csv, filename, entityType: type, count: finalRows.length });
   } catch (err) {
     console.error(`entities/export/${type}:`, err.message);
-    sse.error(err.message || 'Export failed');
+    sse.error(parseApiError(err));
   } finally {
     sse.done();
   }
@@ -360,10 +345,8 @@ router.post('/export/:type', async (req, res) => {
 // POST /export-all  — export selected (or all) entity types; ZIP or CSV (SSE)
 // ---------------------------------------------------------------------------
 
-router.post('/export-all', async (req, res) => {
-  const token = req.headers['x-pb-token'];
-  const useEu  = req.headers['x-pb-eu'] === 'true';
-  if (!token) return res.status(400).json({ error: 'Missing x-pb-token header' });
+router.post('/export-all', pbAuth, async (req, res) => {
+  const { pbFetch, withRetry } = res.locals.pbClient;
 
   const { migrationMode = false, workspaceCode = '', types: selectedTypes } = req.body || {};
 
@@ -377,7 +360,6 @@ router.post('/export-all', async (req, res) => {
     : ENTITY_ORDER;
 
   const sse = startSSE(res);
-  const { pbFetch, withRetry } = createClient(token, useEu);
 
   try {
     sse.progress('Fetching entity configurations…', 3);
@@ -430,13 +412,14 @@ router.post('/export-all', async (req, res) => {
     if (typesToExport.length === 1) {
       sse.progress('Generating CSV…', 92);
       const onlyType = typesToExport[0];
-      const csv = rowsToCsv(headersByType[onlyType], rowsByType[onlyType] || []);
+      const onlyRows = rowsByType[onlyType] || [];
       const date = new Date().toISOString().slice(0, 10);
+      const csv = onlyRows.length > 0 ? rowsToCsv(headersByType[onlyType], onlyRows) : null;
       sse.complete({
         csv,
         filename: `${onlyType}-export-${date}.csv`,
         entityType: onlyType,
-        count: (rowsByType[onlyType] || []).length,
+        count: onlyRows.length,
         perEntity,
       });
     } else {
@@ -478,7 +461,7 @@ router.post('/export-all', async (req, res) => {
     }
   } catch (err) {
     console.error('entities/export-all:', err.message);
-    sse.error(err.message || 'Export failed');
+    sse.error(parseApiError(err));
   } finally {
     sse.done();
   }
@@ -567,17 +550,11 @@ router.post('/normalize-keys-multi', async (req, res) => {
  * Full import: CREATE/PATCH rows in dependency order, then relationship pass.
  * Body: { files, mappings, options }
  */
-router.post('/run', async (req, res) => {
-  const token = req.headers['x-pb-token'];
-  const useEu = req.headers['x-pb-eu'] === 'true';
-  if (!token) { res.status(401).json({ error: 'Missing x-pb-token header' }); return; }
-
+router.post('/run', pbAuth, async (req, res) => {
+  const { pbFetch, withRetry } = res.locals.pbClient;
   const sse = startSSE(res);
-  const { pbFetch, withRetry } = createClient(token, useEu);
   const { files, mappings, options } = req.body || {};
 
-  let aborted = false;
-  res.on('close', () => { aborted = true; });
 
   try {
     const configs = await fetchEntityConfigs(pbFetch, withRetry);
@@ -592,11 +569,11 @@ router.post('/run', async (req, res) => {
         onProgress: (msg, pct) => sse.progress(msg, pct),
         onLog: (level, msg, detail) => sse.log(level, msg, detail),
       },
-      { abortSignal: { get aborted() { return aborted; } } },
+      { abortSignal: { get aborted() { return sse.isAborted(); } } },
     );
     sse.complete(result);
   } catch (err) {
-    sse.error(err.message || String(err));
+    sse.error(parseApiError(err));
   } finally {
     sse.done();
   }
@@ -607,17 +584,11 @@ router.post('/run', async (req, res) => {
  * Relationship-only re-pass — no CREATE/PATCH. Same body as /run.
  * Used by "Fix relationships" button to re-run link writes idempotently.
  */
-router.post('/relationships', async (req, res) => {
-  const token = req.headers['x-pb-token'];
-  const useEu = req.headers['x-pb-eu'] === 'true';
-  if (!token) { res.status(401).json({ error: 'Missing x-pb-token header' }); return; }
-
+router.post('/relationships', pbAuth, async (req, res) => {
+  const { pbFetch, withRetry } = res.locals.pbClient;
   const sse = startSSE(res);
-  const { pbFetch, withRetry } = createClient(token, useEu);
   const { files, mappings, options } = req.body || {};
 
-  let aborted = false;
-  res.on('close', () => { aborted = true; });
 
   try {
     const configs = await fetchEntityConfigs(pbFetch, withRetry);
@@ -632,11 +603,240 @@ router.post('/relationships', async (req, res) => {
         onProgress: (msg, pct) => sse.progress(msg, pct),
         onLog: (level, msg, detail) => sse.log(level, msg, detail),
       },
-      { abortSignal: { get aborted() { return aborted; } } },
+      { abortSignal: { get aborted() { return sse.isAborted(); } } },
     );
     sse.complete(result);
   } catch (err) {
-    sse.error(err.message || String(err));
+    sse.error(parseApiError(err));
+  } finally {
+    sse.done();
+  }
+});
+
+// ---------------------------------------------------------------------------
+// POST /delete/by-csv  — delete entities from uploaded CSVs (SSE)
+// Phase 5 — Delete
+//
+// Body: {
+//   files: { [entityType]: { csvText, uuidColumn } },
+//   options: { safeMode: true }
+// }
+//
+// Algorithm:
+//   1. Parse all CSVs; build allTargetIds Set (all UUIDs to delete across all types).
+//   2. Process types in reverse ENTITY_ORDER (children first, parents last).
+//   3. For each UUID:
+//      - Skip if already removed from allTargetIds (cascade-deleted by a parent earlier).
+//      - In safeMode: fetch children via GET /v2/entities/{id}/relationships?type=child.
+//        If any child is NOT in allTargetIds → skip entity (has untargeted children).
+//        If all children ARE in allTargetIds → remove them (PB will cascade; avoids 404).
+//      - DELETE /v2/entities/{id}
+//      - 404 → warn + skip (not an error).
+// ---------------------------------------------------------------------------
+
+/** Extract pageCursor from a PB API next URL. */
+function extractDeleteCursor(nextUrl) {
+  if (!nextUrl) return null;
+  const m = String(nextUrl).match(/[?&]pageCursor=([^&]+)/);
+  return m ? decodeURIComponent(m[1]) : null;
+}
+
+router.post('/delete/by-csv', pbAuth, async (req, res) => {
+  const { pbFetch, withRetry } = res.locals.pbClient;
+  const { files = {}, options = {} } = req.body || {};
+  const safeMode = options.safeMode !== false; // default true
+
+  const sse = startSSE(res);
+
+  try {
+    // Validate entity types
+    const unknownTypes = Object.keys(files).filter((t) => !ENTITY_ORDER.includes(t));
+    if (unknownTypes.length) {
+      sse.error(`Unknown entity types: ${unknownTypes.join(', ')}`);
+      return;
+    }
+
+    // Build uuidMap and allTargetIds
+    const uuidMap = {};
+    const allTargetIds = new Set();
+
+    for (const entityType of ENTITY_ORDER) {
+      const fileData = files[entityType];
+      if (!fileData?.csvText || !fileData?.uuidColumn) continue;
+
+      const { rows } = parseCSV(fileData.csvText);
+      const uuids = rows
+        .map((r) => cell(r, fileData.uuidColumn))
+        .filter((id) => UUID_RE.test(id));
+
+      if (uuids.length) {
+        uuidMap[entityType] = uuids;
+        uuids.forEach((id) => allTargetIds.add(id));
+      }
+    }
+
+    const totalCount = allTargetIds.size;
+    if (totalCount === 0) {
+      sse.complete({ perType: [], total: 0, deleted: 0, skipped: 0, errors: 0 });
+      return;
+    }
+
+    sse.progress(
+      `Preparing to delete ${totalCount} entities across ${Object.keys(uuidMap).length} type(s)…`,
+      2
+    );
+
+    let totalDeleted = 0;
+    let totalSkipped = 0;
+    let totalErrors = 0;
+    let processed = 0;
+    const perType = [];
+
+    // Process in reverse ENTITY_ORDER (releases → … → objectives)
+    const deleteOrder = [...ENTITY_ORDER].reverse();
+
+    for (const entityType of deleteOrder) {
+      if (sse.isAborted()) break;
+      if (!uuidMap[entityType]) continue;
+
+      const uuids = uuidMap[entityType];
+      const label = ENTITY_LABELS[entityType] || entityType;
+      let typeDeleted = 0;
+      let typeSkipped = 0;
+      let typeErrors = 0;
+
+      sse.log('info', `Processing ${label} (${uuids.length})…`);
+
+      for (const uuid of uuids) {
+        if (sse.isAborted()) break;
+
+        // Already removed from allTargetIds — was cascade-deleted by a parent earlier in this run
+        if (!allTargetIds.has(uuid)) {
+          typeSkipped++;
+          totalSkipped++;
+          processed++;
+          sse.progress(
+            `Deleted ${totalDeleted} of ${totalCount}…`,
+            Math.round((processed / totalCount) * 100)
+          );
+          continue;
+        }
+
+        if (safeMode) {
+          // Fetch all direct children via GET /v2/entities?parent[id]={uuid}
+          // (Using parent[id] filter rather than the relationships endpoint because
+          //  key results store a 'parent' relationship on their own side pointing to the
+          //  objective — the objective does not get a corresponding 'child' relationship
+          //  entry, so ?type=child on the relationships endpoint misses them.)
+          const childIds = [];
+          let cursor = null;
+          let entityMissing = false;
+          do {
+            const url =
+              `/v2/entities?parent%5Bid%5D=${encodeURIComponent(uuid)}&fields[]=id` +
+              (cursor ? `&pageCursor=${encodeURIComponent(cursor)}` : '');
+            let childResp;
+            try {
+              childResp = await withRetry(
+                () => pbFetch('get', url),
+                `check children of ${entityType} ${uuid}`
+              );
+            } catch (childErr) {
+              // 404: entity gone; 400/422: parent[id] invalid because entity doesn't exist
+              if (childErr.status === 404 || childErr.status === 400 || childErr.status === 422) {
+                entityMissing = true;
+                break;
+              }
+              throw childErr;
+            }
+            (childResp.data || []).forEach((e) => {
+              if (e.id) childIds.push(e.id);
+            });
+            cursor = extractDeleteCursor(childResp.links?.next);
+          } while (cursor);
+
+          if (entityMissing) {
+            typeSkipped++;
+            totalSkipped++;
+            processed++;
+            sse.log('warn', `${label} ${uuid} not found — skipped`, { uuid, entityType });
+            sse.progress(
+              `Deleted ${totalDeleted} of ${totalCount}…`,
+              Math.round((processed / totalCount) * 100)
+            );
+            continue;
+          }
+
+          if (childIds.length > 0) {
+            const untargeted = childIds.filter((id) => !allTargetIds.has(id));
+            if (untargeted.length > 0) {
+              typeSkipped++;
+              totalSkipped++;
+              processed++;
+              sse.log(
+                'warn',
+                `Skipped ${label} ${uuid} — has ${untargeted.length} child(ren) not in uploaded files`,
+                { uuid, entityType }
+              );
+              sse.progress(
+                `Deleted ${totalDeleted} of ${totalCount}…`,
+                Math.round((processed / totalCount) * 100)
+              );
+              continue;
+            }
+            // All children are targeted — PB will cascade; remove from Set to avoid 404 later
+            childIds.forEach((id) => allTargetIds.delete(id));
+          }
+        }
+
+        try {
+          await withRetry(
+            () => pbFetch('delete', `/v2/entities/${uuid}`),
+            `delete ${entityType} ${uuid}`
+          );
+          allTargetIds.delete(uuid);
+          typeDeleted++;
+          totalDeleted++;
+          sse.log('success', `Deleted ${label} ${uuid}`, { uuid, entityType });
+        } catch (err) {
+          if (err.status === 404) {
+            sse.log('warn', `${label} ${uuid} not found — skipped`, { uuid, entityType });
+          } else {
+            typeErrors++;
+            totalErrors++;
+            sse.log('error', `Failed to delete ${entityType} ${uuid}: ${parseApiError(err)}`, { uuid, entityType });
+          }
+        }
+
+        processed++;
+        sse.progress(
+          `Deleted ${totalDeleted} of ${totalCount}…`,
+          Math.round((processed / totalCount) * 100)
+        );
+      }
+
+      perType.push({
+        type: entityType,
+        total: uuids.length,
+        deleted: typeDeleted,
+        skipped: typeSkipped,
+        errors: typeErrors,
+      });
+      sse.log(
+        typeErrors > 0 ? 'warn' : 'success',
+        `${label}: ${typeDeleted} deleted · ${typeSkipped} skipped · ${typeErrors} error(s)`
+      );
+    }
+
+    sse.complete({
+      perType,
+      total: totalCount,
+      deleted: totalDeleted,
+      skipped: totalSkipped,
+      errors: totalErrors,
+    });
+  } catch (err) {
+    sse.error(parseApiError(err));
   } finally {
     sse.done();
   }

@@ -29,7 +29,7 @@
  * v2 list:       GET  /v2/notes           cursor from response.links.next
  * v1 list:       GET  /notes              cursor from response.pageCursor
  * v1 create:     POST /notes              no wrapper
- * v1 update:     PATCH /notes/{id}        no wrapper
+ * v1 update:     PATCH /notes/{id}        { data: { ... } }
  * v2 backfill:   PATCH /v2/notes/{id}     { data: { patch: [...] } }
  * v2 relate:     POST  /v2/notes/{id}/relationships  { data: { type, target } }
  * v2 delete:     DELETE /v2/notes/{id}    204 response
@@ -37,13 +37,15 @@
  */
 
 const express = require('express');
-const { createClient } = require('../lib/pbClient');
-const { parseCSV, generateCSV } = require('../lib/csvUtils');
+const { extractCursor, fetchAllEntitiesPost, paginateOffset } = require('../lib/pbClient');
+const { parseCSV, generateCSV, cell } = require('../lib/csvUtils');
 const { startSSE } = require('../lib/sse');
+const { parseApiError } = require('../lib/errorUtils');
+const { UUID_RE } = require('../lib/constants');
+const { pbAuth } = require('../middleware/pbAuth');
 
 const router = express.Router();
 
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const DOMAIN_RE = /^[a-zA-Z0-9][a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
 
@@ -61,37 +63,8 @@ const CSV_HEADERS = [
   'Created At', 'Updated At', 'Linked Entities',
 ];
 
-// ---------------------------------------------------------------------------
-// Shared helpers
-// ---------------------------------------------------------------------------
-
-function extractCursor(nextLink) {
-  if (!nextLink) return null;
-  const match = String(nextLink).match(/pageCursor=([^&]+)/);
-  return match ? decodeURIComponent(match[1]) : null;
-}
-
-function cell(row, col) {
-  if (!col) return '';
-  const v = row[col];
-  return v === undefined || v === null ? '' : String(v).trim();
-}
-
 function isTruthy(val) {
   return val === true || val === 'TRUE' || val === 'true' || val === '1' || val === 1;
-}
-
-function parseApiError(err) {
-  const msg = err.message || String(err);
-  const jsonMatch = msg.match(/\{[\s\S]*"errors"[\s\S]*\}/);
-  if (jsonMatch) {
-    try {
-      const parsed = JSON.parse(jsonMatch[0]);
-      const first = parsed.errors?.[0];
-      if (first) return first.detail || first.title || msg;
-    } catch (_) {}
-  }
-  return msg;
 }
 
 function normalizeUrl(url) {
@@ -145,44 +118,22 @@ function buildExportFilename(createdFrom, createdTo) {
 /** Build UUID→email map from v1 /users endpoint. */
 async function buildUserCache(pbFetch, withRetry) {
   const map = new Map();
-  let offset = 0;
-  const limit = 100;
-
-  while (true) {
-    const r = await withRetry(
-      () => pbFetch('get', `/users?pageLimit=${limit}&pageOffset=${offset}`),
-      `fetch users offset ${offset}`
-    );
-    if (!r.data?.length) break;
-    for (const u of r.data) {
+  await paginateOffset(pbFetch, withRetry, '/users', (data) => {
+    for (const u of data) {
       if (u.id && u.email) map.set(u.id, u.email);
     }
-    if (r.data.length < limit) break;
-    offset += limit;
-  }
-
+  });
   return map;
 }
 
 /** Build UUID→domain map from /companies endpoint. */
 async function buildCompanyCache(pbFetch, withRetry) {
   const map = new Map();
-  let offset = 0;
-  const limit = 100;
-
-  while (true) {
-    const r = await withRetry(
-      () => pbFetch('get', `/companies?pageLimit=${limit}&pageOffset=${offset}`),
-      `fetch companies offset ${offset}`
-    );
-    if (!r.data?.length) break;
-    for (const c of r.data) {
+  await paginateOffset(pbFetch, withRetry, '/companies', (data) => {
+    for (const c of data) {
       if (c.id && c.domain) map.set(c.id, c.domain);
     }
-    if (r.data.length < limit) break;
-    offset += limit;
-  }
-
+  });
   return map;
 }
 
@@ -358,7 +309,7 @@ async function updateNote(pbFetch, withRetry, noteId, payload) {
   let ownerRejected = false;
 
   const tryUpdate = async (p) => {
-    await withRetry(() => pbFetch('patch', `/notes/${noteId}`, p), `update note ${noteId}`);
+    await withRetry(() => pbFetch('patch', `/notes/${noteId}`, { data: p }), `update note ${noteId}`);
   };
 
   try {
@@ -470,22 +421,17 @@ async function buildMigrationCache(pbFetch, withRetry, fieldName = 'original_uui
   if (!fieldId) return cache; // No migration field configured — empty cache
 
   for (const type of types) {
-    let cursor = null;
-    do {
-      const body = { data: { type } };
-      if (cursor) body.data.pageCursor = cursor;
-      const r = await withRetry(
-        () => pbFetch('post', '/v2/entities/search', body),
-        `fetch ${type} for migration cache`
-      );
-      for (const entity of r.data || []) {
-        const originalUuid = (entity.fields || {})[fieldId];
-        if (originalUuid && UUID_RE.test(originalUuid)) {
-          cache.set(originalUuid, entity.id);
-        }
+    const entities = await fetchAllEntitiesPost(
+      pbFetch, withRetry,
+      { data: { types: [type] } },
+      `fetch ${type} for migration cache`
+    );
+    for (const entity of entities) {
+      const originalUuid = (entity.fields || {})[fieldId];
+      if (originalUuid && UUID_RE.test(originalUuid)) {
+        cache.set(originalUuid, entity.id);
       }
-      cursor = extractCursor(r.links?.next);
-    } while (cursor);
+    }
   }
 
   return cache;
@@ -495,13 +441,9 @@ async function buildMigrationCache(pbFetch, withRetry, fieldName = 'original_uui
 // Route 1: Export
 // ---------------------------------------------------------------------------
 
-router.post('/export', async (req, res) => {
-  const token = req.headers['x-pb-token'];
-  const useEu = req.headers['x-pb-eu'] === 'true';
-  if (!token) return res.status(400).json({ error: 'Missing x-pb-token header' });
-
+router.post('/export', pbAuth, async (req, res) => {
+  const { pbFetch, withRetry } = res.locals.pbClient;
   const sse = startSSE(res);
-  const { pbFetch, withRetry } = createClient(token, useEu);
   const { createdFrom, createdTo } = req.body || {};
 
   try {
@@ -552,10 +494,7 @@ router.post('/export', async (req, res) => {
 // Route 2: Import preview (validation, no API calls)
 // ---------------------------------------------------------------------------
 
-router.post('/import/preview', async (req, res) => {
-  const token = req.headers['x-pb-token'];
-  if (!token) return res.status(400).json({ error: 'Missing x-pb-token header' });
-
+router.post('/import/preview', pbAuth, async (req, res) => {
   const { csvText, mapping } = req.body;
   if (!csvText || !mapping) return res.status(400).json({ error: 'Missing csvText or mapping' });
 
@@ -585,8 +524,9 @@ router.post('/import/preview', async (req, res) => {
     const sourceRecordId = cell(row, mapping.sourceRecordIdColumn);
     const linkedEntities = cell(row, mapping.linkedEntitiesColumn);
 
-    // Required
-    if (!title) err('title', 'Title is required');
+    // Required only on CREATE
+    const validPbId = pbId && UUID_RE.test(pbId);
+    if (!title && !validPbId) err('title', 'Title is required when creating a new note');
 
     // UUID format
     if (pbId && !UUID_RE.test(pbId)) err('pb_id', 'pb_id must be a valid UUID');
@@ -637,24 +577,16 @@ router.post('/import/preview', async (req, res) => {
 // Route 3: Import run (SSE)
 // ---------------------------------------------------------------------------
 
-router.post('/import/run', async (req, res) => {
-  const token = req.headers['x-pb-token'];
-  const useEu = req.headers['x-pb-eu'] === 'true';
-  if (!token) return res.status(400).json({ error: 'Missing x-pb-token header' });
+router.post('/import/run', pbAuth, async (req, res) => {
+  const { pbFetch, withRetry } = res.locals.pbClient;
 
   const { csvText, mapping, migrationMode, migrationFieldName } = req.body;
   if (!csvText || !mapping) return res.status(400).json({ error: 'Missing csvText or mapping' });
 
   const sse = startSSE(res);
-  const { pbFetch, withRetry } = createClient(token, useEu);
 
-  // Must listen on `res`, not `req`. req 'close' fires on HTTP half-close
-  // (request body consumed) before any rows are processed, causing premature stopped: true.
-  // res 'close' only fires when the client actually disconnects from the SSE stream.
-  let aborted = false;
-  res.on('close', () => { aborted = true; });
 
-  const result = { total: 0, created: 0, updated: 0, errors: 0, stopped: false };
+  const result = { total: 0, created: 0, updated: 0, skipped: 0, errors: 0, stopped: false };
 
   try {
     const { rows } = parseCSV(csvText);
@@ -676,7 +608,7 @@ router.post('/import/run', async (req, res) => {
     const sourceCounters = {};
 
     for (let i = 0; i < rows.length; i++) {
-      if (aborted) { result.stopped = true; break; }
+      if (sse.isAborted()) { result.stopped = true; break; }
 
       const row = rows[i];
       const rowNum = i + 1;
@@ -714,14 +646,22 @@ router.post('/import/run', async (req, res) => {
           noteId = r.id;
           ownerRejected = r.ownerRejected;
           result.created++;
-          sse.log('success', `Row ${rowNum}: Created note "${payload.title}"`, `ID: ${noteId}`);
+          sse.log('success', `Row ${rowNum}: Created note "${payload.title}"`, { uuid: noteId, row: rowNum });
         } else {
-          const r = await updateNote(pbFetch, withRetry, targetNoteId, payload);
-          noteId = targetNoteId;
-          ownerRejected = r.ownerRejected;
-          result.updated++;
-          sse.log('success', `Row ${rowNum}: Updated note "${payload.title}"`, `ID: ${noteId}`);
+          if (Object.keys(payload).length === 0) {
+            result.skipped++;
+            noteId = targetNoteId;
+            sse.log('warn', `Row ${rowNum}: No updatable fields mapped — v1 PATCH skipped`, { uuid: noteId, row: rowNum });
+          } else {
+            const r = await updateNote(pbFetch, withRetry, targetNoteId, payload);
+            noteId = targetNoteId;
+            ownerRejected = r.ownerRejected;
+            result.updated++;
+            sse.log('success', `Row ${rowNum}: Updated note "${payload.title || noteId}"`, { uuid: noteId, row: rowNum });
+          }
         }
+
+        if (sse.isAborted()) { result.stopped = true; break; }
 
         // v2 backfill (archived, processed, creator, owner if rejected by v1)
         const archivedVal = cell(row, mapping.archivedColumn);
@@ -742,6 +682,7 @@ router.post('/import/run', async (req, res) => {
             creatorEmail: creatorEmail || null,
             ownerEmail: ownerRejected && ownerEmail ? ownerEmail : null,
           });
+          if (sse.isAborted()) { result.stopped = true; break; }
         }
 
         // Hierarchy linking
@@ -749,22 +690,23 @@ router.post('/import/run', async (req, res) => {
         if (linkedEntitiesRaw) {
           const uuids = linkedEntitiesRaw.split(',').map((s) => s.trim()).filter((s) => UUID_RE.test(s));
           for (const originalUuid of uuids) {
+            if (sse.isAborted()) break;
             const targetUuid = migrationCache ? (migrationCache.get(originalUuid) || null) : originalUuid;
             if (!targetUuid) {
-              sse.log('warn', `Row ${rowNum}: Entity ${originalUuid} not found in migration cache — skipped`, '');
+              sse.log('warn', `Row ${rowNum}: Entity ${originalUuid} not found in migration cache — skipped`, { row: rowNum });
               continue;
             }
             try {
               await linkNoteToEntity(pbFetch, withRetry, noteId, targetUuid);
             } catch (linkErr) {
-              sse.log('warn', `Row ${rowNum}: Failed to link entity ${targetUuid}`, parseApiError(linkErr));
+              sse.log('warn', `Row ${rowNum}: Failed to link entity ${targetUuid} — ${parseApiError(linkErr)}`, { row: rowNum });
             }
           }
         }
 
       } catch (err) {
         result.errors++;
-        sse.log('error', `Row ${rowNum}: ${parseApiError(err)}`, '');
+        sse.log('error', `Row ${rowNum}: ${parseApiError(err)}`, { row: rowNum });
       }
     }
 
@@ -780,19 +722,14 @@ router.post('/import/run', async (req, res) => {
 // Route 4: Delete by CSV (SSE)
 // ---------------------------------------------------------------------------
 
-router.post('/delete/by-csv', async (req, res) => {
-  const token = req.headers['x-pb-token'];
-  const useEu = req.headers['x-pb-eu'] === 'true';
-  if (!token) return res.status(400).json({ error: 'Missing x-pb-token header' });
+router.post('/delete/by-csv', pbAuth, async (req, res) => {
+  const { pbFetch, withRetry } = res.locals.pbClient;
 
   const { csvText, uuidColumn } = req.body;
   if (!csvText || !uuidColumn) return res.status(400).json({ error: 'Missing csvText or uuidColumn' });
 
   const sse = startSSE(res);
-  const { pbFetch, withRetry } = createClient(token, useEu);
 
-  let aborted = false;
-  res.on('close', () => { aborted = true; });
 
   try {
     const { rows } = parseCSV(csvText);
@@ -811,7 +748,7 @@ router.post('/delete/by-csv', async (req, res) => {
     let errors = 0;
 
     for (let i = 0; i < uuids.length; i++) {
-      if (aborted) break;
+      if (sse.isAborted()) break;
       const id = uuids[i];
       const pct = Math.round(((i + 1) / uuids.length) * 100);
 
@@ -843,16 +780,10 @@ router.post('/delete/by-csv', async (req, res) => {
 // Route 5: Delete all (SSE)
 // ---------------------------------------------------------------------------
 
-router.post('/delete/all', async (req, res) => {
-  const token = req.headers['x-pb-token'];
-  const useEu = req.headers['x-pb-eu'] === 'true';
-  if (!token) return res.status(400).json({ error: 'Missing x-pb-token header' });
-
+router.post('/delete/all', pbAuth, async (_req, res) => {
+  const { pbFetch, withRetry } = res.locals.pbClient;
   const sse = startSSE(res);
-  const { pbFetch, withRetry } = createClient(token, useEu);
 
-  let aborted = false;
-  res.on('close', () => { aborted = true; });
 
   try {
     sse.progress('Collecting all note IDs…', 5);
@@ -867,7 +798,7 @@ router.post('/delete/all', async (req, res) => {
     } while (cursor);
 
     if (allIds.length === 0) {
-      sse.complete({ total: 0, deleted: 0, errors: 0 });
+      sse.complete({ total: 0, deleted: 0, skipped: 0, errors: 0 });
       sse.done();
       return;
     }
@@ -875,10 +806,11 @@ router.post('/delete/all', async (req, res) => {
     sse.progress(`Found ${allIds.length} notes. Beginning deletion…`, 10);
 
     let deleted = 0;
+    let skipped = 0;
     let errors = 0;
 
     for (let i = 0; i < allIds.length; i++) {
-      if (aborted) break;
+      if (sse.isAborted()) break;
       const id = allIds[i];
       const pct = 10 + Math.round(((i + 1) / allIds.length) * 90);
 
@@ -888,8 +820,8 @@ router.post('/delete/all', async (req, res) => {
         if (deleted % 50 === 0) sse.log('info', `Deleted ${deleted}/${allIds.length} notes…`, '');
       } catch (err) {
         if (err.status === 404) {
-          // Already deleted — count as success
-          deleted++;
+          skipped++;
+          sse.log('info', `Note ${id} not found — no need to delete`, '');
         } else {
           errors++;
           sse.log('error', `Failed to delete ${id}: ${parseApiError(err)}`, '');
@@ -899,7 +831,7 @@ router.post('/delete/all', async (req, res) => {
       sse.progress(`Deleted ${deleted} of ${allIds.length}…`, pct);
     }
 
-    sse.complete({ total: allIds.length, deleted, errors });
+    sse.complete({ total: allIds.length, deleted, skipped, errors });
   } catch (err) {
     sse.error(parseApiError(err));
   } finally {
@@ -965,15 +897,11 @@ router.post('/migrate-prep', async (req, res) => {
  * Returns: { found: boolean, fieldName }
  * No API token header required — but we do need it to query PB.
  */
-router.post('/detect-migration-field', async (req, res) => {
-  const token = req.headers['x-pb-token'];
-  const useEu = req.headers['x-pb-eu'] === 'true';
-  if (!token) return res.status(400).json({ error: 'Missing x-pb-token header' });
+router.post('/detect-migration-field', pbAuth, async (req, res) => {
+  const { pbFetch, withRetry } = res.locals.pbClient;
 
   const { fieldName } = req.body;
   if (!fieldName?.trim()) return res.status(400).json({ error: 'Missing fieldName' });
-
-  const { pbFetch, withRetry } = createClient(token, useEu);
   const fieldId = await findMigrationFieldId(pbFetch, withRetry, fieldName.trim());
 
   res.json({ found: fieldId !== null, fieldName: fieldName.trim() });

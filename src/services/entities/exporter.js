@@ -15,22 +15,15 @@ const {
   SYSTEM_FIELD_ORDER,
   HAS_TIMEFRAME,
   HEALTH_TYPES,
-  SINGULAR_TEAM_TYPES,
   syntheticColumns,
   relationshipColumns,
 } = require('./meta');
 const { schemaToType } = require('./configCache');
+const { extractCursor } = require('../../lib/pbClient');
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-/** Extract pageCursor value from a links.next URL. */
-function extractCursor(nextLink) {
-  if (!nextLink) return null;
-  const m = String(nextLink).match(/pageCursor=([^&]+)/);
-  return m ? decodeURIComponent(m[1]) : null;
-}
 
 /**
  * Format a custom field value for CSV output based on its schema type.
@@ -133,11 +126,15 @@ function entityToRow(entity, entityType, entityConfig) {
         row[col] = fields.phase?.name || '';
         break;
       case 'teams': {
-        // objective uses fields.team (singular API field); all others use fields.teams
-        const teamData = SINGULAR_TEAM_TYPES.has(entityType) ? fields.team : fields.teams;
-        row[col] = Array.isArray(teamData)
-          ? teamData.map((t) => t.name).filter(Boolean).join(', ')
-          : '';
+        // Objectives return this field as `team` (singular); all other types use `teams` (plural)
+        const teamData = fields.teams ?? fields.team;
+        if (Array.isArray(teamData)) {
+          row[col] = teamData.map((t) => t.name).filter(Boolean).join(', ');
+        } else if (teamData && typeof teamData === 'object') {
+          row[col] = teamData.name || '';
+        } else {
+          row[col] = '';
+        }
         break;
       }
       case 'archived':
@@ -213,6 +210,16 @@ function entityToRow(entity, entityType, entityConfig) {
     row['connected_rels_ext_key'] = relLinks.map((l) => l.target.id).filter(Boolean).join(', ');
   }
 
+  const blockedByRels = rels.filter((r) => r.type === 'isBlockedBy');
+  if (blockedByRels.length) {
+    row['blocked_by_ext_key'] = blockedByRels.map((r) => r.target.id).filter(Boolean).join(', ');
+  }
+
+  const blockingRels = rels.filter((r) => r.type === 'isBlocking');
+  if (blockingRels.length) {
+    row['blocking_ext_key'] = blockingRels.map((r) => r.target.id).filter(Boolean).join(', ');
+  }
+
   return row;
 }
 
@@ -234,11 +241,11 @@ async function fetchAllEntities(entityType, pbFetch, withRetry, onProgress) {
   do {
     page++;
     const path = cursor
-      ? `/v2/entities/search?pageCursor=${encodeURIComponent(cursor)}`
-      : '/v2/entities/search';
+      ? `/v2/entities?type[]=${entityType}&pageCursor=${encodeURIComponent(cursor)}`
+      : `/v2/entities?type[]=${entityType}`;
 
     const response = await withRetry(
-      () => pbFetch('post', path, { data: { types: [entityType] } }),
+      () => pbFetch('get', path),
       `export ${entityType} page ${page}`
     );
 
@@ -312,4 +319,4 @@ function rowsToCsv(headers, rows) {
   return '\uFEFF' + Papa.unparse({ fields: headers, data });
 }
 
-module.exports = { exportEntityType, buildExportHeaders, rowsToCsv };
+module.exports = { exportEntityType, buildExportHeaders, rowsToCsv, formatFieldValue, entityToRow };

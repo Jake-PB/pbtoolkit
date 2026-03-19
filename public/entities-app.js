@@ -189,7 +189,7 @@ function entGetFieldDefs(entityType, configs) {
   const defs = [];
 
   // 1. Tracking columns
-  defs.push({ id: 'pb_id',   label: 'pb_id',   required: false, group: 'tracking', defaultHeader: 'pb_id' });
+  defs.push({ id: 'pb_id',   label: 'pb_id',   required: false, group: 'tracking', defaultHeader: 'pb_id', hint: 'Present → update existing · empty → create new' });
   defs.push({ id: 'ext_key', label: 'ext_key', required: false, group: 'tracking', defaultHeader: 'ext_key' });
 
   // 2. System fields from configs, in preferred order
@@ -199,20 +199,20 @@ function entGetFieldDefs(entityType, configs) {
     return (ai === -1 ? 999 : ai) - (bi === -1 ? 999 : bi);
   });
   sorted.forEach((f) => {
-    defs.push({ id: f.id, label: f.name, required: f.id === 'name', group: 'system', defaultHeader: f.name, displayType: f.displayType });
+    defs.push({ id: f.id, label: f.name, required: false, hint: f.id === 'name' ? 'Required when creating new entities (rows without a pb_id)' : undefined, group: 'system', defaultHeader: f.name, displayType: f.displayType });
   });
 
-  // 3. Synthetic timeframe columns
+  // 3. Synthetic timeframe columns (grouped under Default fields)
   if (ENT_HAS_TIMEFRAME.has(entityType)) {
-    defs.push({ id: 'timeframe_start', label: 'Timeframe start (YYYY-MM-DD)', required: false, group: 'timeframe', defaultHeader: 'timeframe_start (YYYY-MM-DD)' });
-    defs.push({ id: 'timeframe_end',   label: 'Timeframe end (YYYY-MM-DD)',   required: false, group: 'timeframe', defaultHeader: 'timeframe_end (YYYY-MM-DD)' });
+    defs.push({ id: 'timeframe_start', label: 'Timeframe start (YYYY-MM-DD)', required: false, group: 'system', badge: 'timeframe', defaultHeader: 'timeframe_start (YYYY-MM-DD)' });
+    defs.push({ id: 'timeframe_end',   label: 'Timeframe end (YYYY-MM-DD)',   required: false, group: 'system', badge: 'timeframe', defaultHeader: 'timeframe_end (YYYY-MM-DD)' });
   }
 
-  // 4. Synthetic health columns
+  // 4. Synthetic health columns (grouped under Default fields)
   if (ENT_HEALTH_TYPES.has(entityType)) {
-    defs.push({ id: 'health_status',           label: 'Health status',             required: false, group: 'health', defaultHeader: 'health_status' });
-    defs.push({ id: 'health_comment',          label: 'Health comment',            required: false, group: 'health', defaultHeader: 'health_comment' });
-    defs.push({ id: 'health_updated_by_email', label: 'Health updated by (email)', required: false, group: 'health', defaultHeader: 'health_updated_by (email)' });
+    defs.push({ id: 'health_status',           label: 'Health status',             required: false, group: 'system', badge: 'health', defaultHeader: 'health_status' });
+    defs.push({ id: 'health_comment',          label: 'Health comment',            required: false, group: 'system', badge: 'health', defaultHeader: 'health_comment' });
+    defs.push({ id: 'health_updated_by_email', label: 'Health updated by (email)', required: false, group: 'system', badge: 'health', defaultHeader: 'health_updated_by (email)' });
   }
 
   // 5. Custom UUID fields from configs
@@ -356,24 +356,30 @@ function renderMappingTable(container, entityType, csvHeaders, configs, savedMap
     let groupHeader = '';
     if (def.group !== lastGroup) {
       lastGroup = def.group;
-      const labels = { tracking: 'Tracking', system: 'System fields', timeframe: 'Timeframe', health: 'Health', custom: 'Custom fields' };
+      const labels = { tracking: 'Tracking', system: 'Default fields', custom: 'Custom fields' };
       const groupName = labels[def.group] || 'Relationships';
-      groupHeader = `<tr class="mapping-group-row"><td colspan="2" class="mapping-group-label">${groupName}</td></tr>`;
+      groupHeader = `<tr class="mapping-group-row"><td colspan="3" class="mapping-group-label">${groupName}</td></tr>`;
     }
 
-    const currentVal     = (mapping.columns && mapping.columns[def.id]) || '';
-    const headerOptions  = csvHeaders.map((h) => `<option value="${escHtml(h)}"${h === currentVal ? ' selected' : ''}>${escHtml(h)}</option>`).join('');
-    const reqBadge       = def.required ? ' <span class="badge-required">required</span>' : '';
-    const typeBadge      = def.displayType ? ` <span class="ent-type-hint">${def.displayType}</span>` : '';
+    const currentVal    = (mapping.columns && mapping.columns[def.id]) || '';
+    const headerOptions = csvHeaders.map((h) => `<option value="${escHtml(h)}"${h === currentVal ? ' selected' : ''}>${escHtml(h)}</option>`).join('');
+    const typeBadge = def.displayType
+      ? `<span class="badge badge-muted">${escHtml(def.displayType)}</span>`
+      : def.badge
+        ? `<span class="badge badge-muted">${escHtml(def.badge)}</span>`
+        : '';
+    const reqBadge = def.required ? ' <span class="badge badge-danger">required</span>' : '';
 
+    const hintHtml = def.hint ? ` <span class="info-icon" data-tip="${escHtml(def.hint)}">i</span>` : '';
     return `${groupHeader}<tr>
-      <td>${escHtml(def.label)}${typeBadge}${reqBadge}</td>
-      <td><select data-field-id="${escHtml(def.id)}"><option value="">(skip)</option>${headerOptions}</select></td>
+      <td>${escHtml(def.label)}${reqBadge}${hintHtml}</td>
+      <td>${typeBadge}</td>
+      <td><select data-field-id="${escHtml(def.id)}"><option value="">(⇢ skip)</option>${headerOptions}</select></td>
     </tr>`;
   }).join('');
 
   container.innerHTML = `<table class="mapping-table">
-    <thead><tr><th>PB field</th><th>CSV column</th></tr></thead>
+    <thead><tr><th>PB field</th><th>Type</th><th>CSV column</th></tr></thead>
     <tbody>${rows}</tbody>
   </table>`;
 
@@ -709,6 +715,7 @@ function renderValidationResults(data) {
     }).join('');
 
   resultsEl.classList.remove('hidden');
+  resultsEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
 // ── Import run ────────────────────────────────────────────
@@ -720,10 +727,11 @@ let entImportCtrl = null; // AbortController for in-flight import SSE
 // Entities SSE events include detail.entityType; we append it as a suffix to message.
 const _entLogAppendBase = makeLogAppender('ent-import-log', 'ent-import-log-entries', 'ent-import-log-counts');
 function entImportAppendLog(level, message, detail) {
-  // Append [entityType] suffix when present so user can distinguish types in the log
-  const entitySuffix = detail && typeof detail === 'object' && detail.entityType
-    ? ` [${detail.entityType}]` : '';
-  _entLogAppendBase({ level, message: message + entitySuffix, ts: detail?.ts });
+  // detail is the full SSE event object { level, message, detail: { entityType, uuid, row }, ts }
+  // Extract the inner detail sub-object for entityType suffix and CSV buffer capture.
+  const innerDetail = detail && typeof detail === 'object' ? (detail.detail ?? detail) : null;
+  const entitySuffix = innerDetail && innerDetail.entityType ? ` [${innerDetail.entityType}]` : '';
+  _entLogAppendBase({ level, message: message + entitySuffix, detail: innerDetail, ts: detail?.ts });
 }
 // Expose reset/getCounts for entImportSetRunning and stop handler
 entImportAppendLog.reset     = () => _entLogAppendBase.reset();
@@ -742,12 +750,14 @@ function entImportSetRunning(running) {
   if (running) {
     // Reset log for fresh run (fixes innerHTML='' bug — only clears entries, not DOM structure)
     entImportAppendLog.reset();
+    document.getElementById('btn-ent-import-download-log')?.classList.add('hidden');
     // Hide validate results, error, and previous summary; show log panel
     document.getElementById('ent-validate-results')?.classList.add('hidden');
     document.getElementById('ent-import-error')?.classList.add('hidden');
     document.getElementById('ent-import-summary-box')?.classList.add('hidden');
     // Show the log panel and restore progress track
     document.getElementById('ent-import-step-log')?.classList.remove('hidden');
+    document.getElementById('ent-import-step-log')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     document.getElementById('ent-import-progress-track')?.classList.remove('hidden');
     document.getElementById('ent-import-status')?.classList.remove('hidden');
     entImportSetProgress(0, '');
@@ -756,6 +766,7 @@ function entImportSetRunning(running) {
     // After import: hide progress bar + status; keep log panel + log visible for review
     document.getElementById('ent-import-progress-track')?.classList.add('hidden');
     document.getElementById('ent-import-status')?.classList.add('hidden');
+    document.getElementById('btn-ent-import-download-log')?.classList.remove('hidden');
   }
 }
 
@@ -784,7 +795,7 @@ function entImportShowComplete(data) {
   const { perEntity = [], totalCreated = 0, totalUpdated = 0, totalErrors = 0,
           stopped, relationCounts, newIdsCsv } = data;
 
-  const { parentLinks = 0, relationshipLinks = 0 } = relationCounts || {};
+  const { parentLinks = 0, relationshipLinks = 0, skippedLinks = 0 } = relationCounts || {};
 
   // Per-entity breakdown table
   const rows = perEntity.map((e) =>
@@ -811,7 +822,8 @@ function entImportShowComplete(data) {
     updated:   totalUpdated,
     errors:    totalErrors,
     stopped,
-    extraText: `${parentLinks} parent links · ${relationshipLinks} connected links`,
+    extraText: `${parentLinks} parent links · ${relationshipLinks} connected links` +
+               (skippedLinks > 0 ? ` · ${skippedLinks} skipped (target not resolved)` : ''),
     extraHtml,
   });
 
@@ -842,8 +854,8 @@ function runEntityImport() {
       entImportSetRunning(false);
       const c = entImportAppendLog.getCounts();
       renderImportComplete(document.getElementById('ent-import-summary-box'), {
-        stopped: true, created: 0, updated: 0,
-        errors: c.error, extraText: `${c.success} rows processed`,
+        stopped: true, created: c.success, updated: 0,
+        errors: c.error, extraText: '',
       });
       setText('ent-import-run-title', 'Import stopped');
     },
@@ -870,6 +882,8 @@ function runEntityFixRelationships() {
 // ── Export view ───────────────────────────────────────────
 
 let entExportCtrl = null; // AbortController for in-flight export SSE
+let entLastExportBlob = null;
+let entLastExportFilename = null;
 
 function entExportMigrationMode() {
   return document.getElementById('ent-export-migration-mode')?.checked || false;
@@ -905,6 +919,15 @@ function entExportShowError(msg) {
 function entExportHideError() {
   const el = document.getElementById('ent-export-error');
   if (el) el.classList.add('hidden');
+}
+
+function entExportShowDone(msg) {
+  setText('ent-export-done-msg', msg);
+  show('ent-export-done');
+}
+
+function entExportHideDone() {
+  hide('ent-export-done');
 }
 
 function entExportAppendLog(level, message) {
@@ -943,15 +966,18 @@ function runEntityExportSelected(types) {
   const migMode = entExportMigrationMode();
   const wsCode  = entExportWorkspaceCode();
 
+  hide('ent-export-idle');
+
   if (migMode && !wsCode) {
     entExportShowProgress(false);
     entExportClearLog();
     entExportShowError('Enter a workspace code to use migration mode.');
-    document.getElementById('ent-export-workspace-code')?.focus();
     return;
   }
 
   entExportHideError();
+  entExportHideDone();
+  hide('ent-export-stopped');
   entExportClearLog();
   entExportShowProgress(true);
   entExportSetProgress(0, 'Starting export…');
@@ -964,23 +990,32 @@ function runEntityExportSelected(types) {
       onProgress: ({ message, percent }) => entExportSetProgress(percent || 0, message),
       onLog: (entry) => entExportAppendLog(entry.level, entry.message),
       onComplete: (data) => {
+        entExportSetRunning(false);
+        entExportShowProgress(false);
         if (data.csv) {
           // Single type — plain CSV
           const count = data.count || 0;
-          entExportSetProgress(100, `Done — ${count} entities exported.`);
-          entExportSetRunning(false);
+          const filename = data.filename || `export.csv`;
           const blob = new Blob([data.csv], { type: 'text/csv;charset=utf-8;' });
-          triggerDownload(blob, data.filename || `export.csv`);
+          entLastExportBlob = blob;
+          entLastExportFilename = filename;
+          triggerDownload(blob, filename);
+          const typeLabel = ENT_LABELS[data.entityType] || 'Entities';
+          entExportShowDone(`Exported ${count.toLocaleString()} ${typeLabel}. Download started.`);
+        } else if (data.count === 0 && !data.zipBase64) {
+          entExportShowDone('No entities found for the selected type.');
         } else if (data.zipBase64) {
           // Multiple types — ZIP
           const total = data.totalEntities || 0;
-          entExportSetProgress(100, `Done — ${total} total entities exported.`);
-          entExportSetRunning(false);
+          const filename = data.filename || `pbtoolkit-entities-export.zip`;
           const binary = atob(data.zipBase64);
           const bytes = new Uint8Array(binary.length);
           for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
           const blob = new Blob([bytes], { type: 'application/zip' });
-          triggerDownload(blob, data.filename || `pbtoolkit-entities-export.zip`);
+          entLastExportBlob = blob;
+          entLastExportFilename = filename;
+          triggerDownload(blob, filename);
+          entExportShowDone(`Exported ${total.toLocaleString()} entities across all selected types. Download started.`);
         }
       },
       onError: (msg) => {
@@ -990,7 +1025,10 @@ function runEntityExportSelected(types) {
       },
       onAbort: () => {
         entExportSetRunning(false);
+        entExportShowProgress(false);
         entExportSetProgress(0, '');
+        show('ent-export-stopped');
+        entExportCtrl = null;
       },
     }
   );
@@ -1036,6 +1074,28 @@ function initEntitiesExportView() {
       runEntityExportSelected(selected);
     });
   }
+
+  document.getElementById('btn-ent-export-download-again')?.addEventListener('click', () => {
+    if (!entLastExportBlob) return;
+    triggerDownload(entLastExportBlob, entLastExportFilename);
+  });
+
+  const resetEntExport = () => {
+    entExportHideDone();
+    entExportHideError();
+    hide('ent-export-stopped');
+    entExportShowProgress(false);
+    entExportSetProgress(0, '');
+    show('ent-export-idle');
+  };
+
+  document.getElementById('btn-ent-export-again')?.addEventListener('click', resetEntExport);
+  document.getElementById('btn-ent-export-stopped-again')?.addEventListener('click', resetEntExport);
+  document.getElementById('btn-ent-export-retry')?.addEventListener('click', resetEntExport);
+  document.getElementById('btn-ent-export-stop')?.addEventListener('click', () => {
+    entExportCtrl?.abort();
+    entExportCtrl = null;
+  });
 
   // Tab switching
   document.getElementById('ent-export-tab-bar')?.addEventListener('click', (e) => {
@@ -1169,6 +1229,263 @@ function initEntitiesExportView() {
   }
 }
 
+// ── Delete view ───────────────────────────────────────────
+
+// Delete state
+const entDelete = {
+  files:      {},    // entityType → { filename, csvText, headers, rowCount, uuidColumn }
+  controller: null,  // subscribeSSE controller for abort
+};
+
+// Log appender for entities delete — bound to delete log DOM IDs.
+const _entDelLogBase = makeLogAppender('ent-delete-log', 'ent-delete-log-entries', 'ent-delete-log-counts');
+function entDelAppendLog(level, message, detail) {
+  _entDelLogBase({ level, message, detail });
+}
+entDelAppendLog.reset     = () => _entDelLogBase.reset();
+entDelAppendLog.getCounts = () => _entDelLogBase.getCounts();
+
+/** Auto-select the best UUID column from CSV headers (same priority as notes/companies). */
+function entDelAutoSelectColumn(headers) {
+  const candidates = ['pb_id', 'id', 'uuid'];
+  const lc = headers.map((h) => h.toLowerCase());
+  for (const c of candidates) {
+    const idx = lc.indexOf(c);
+    if (idx !== -1) return headers[idx];
+  }
+  return headers[0] || '';
+}
+
+/** Update the preview table and show/hide the preview panel. */
+function entDelUpdatePreview() {
+  const tbody   = document.getElementById('ent-delete-preview-tbody');
+  const preview = document.getElementById('ent-delete-step-preview');
+  if (!tbody || !preview) return;
+
+  const uploaded = ENT_ORDER.filter((t) => entDelete.files[t]);
+
+  if (!uploaded.length) {
+    preview.classList.add('hidden');
+    return;
+  }
+
+  tbody.innerHTML = uploaded.map((type) => {
+    const f   = entDelete.files[type];
+    const sel = document.getElementById(`ent-del-sel-${type}`);
+    const col = sel ? sel.value : f.uuidColumn;
+    return `<tr>
+      <td>${ENT_LABELS[type]}</td>
+      <td>${f.rowCount.toLocaleString()}</td>
+      <td><code>${escHtml(col)}</code></td>
+    </tr>`;
+  }).join('');
+
+  preview.classList.remove('hidden');
+}
+
+/** Handle a file drop/select for a delete tile. */
+async function entDelHandleFile(entityType, file) {
+  const tile = document.getElementById(`ent-del-tile-${entityType}`);
+  if (tile) {
+    tile.querySelector('.ent-tile-status').textContent = 'Reading…';
+    tile.classList.add('has-file');
+  }
+
+  const csvText  = await file.text();
+  const rowCount = countCSVDataRows(csvText);
+  const headers  = parseCSVHeaders(csvText);
+  const colAuto  = entDelAutoSelectColumn(headers);
+
+  entDelete.files[entityType] = { filename: file.name, csvText, headers, rowCount, uuidColumn: colAuto };
+
+  if (tile) {
+    tile.querySelector('.ent-tile-status').textContent = `${file.name} · ${rowCount.toLocaleString()} rows`;
+    tile.querySelector('.ent-tile-remove').classList.remove('hidden');
+
+    // Populate column picker
+    const colPick = document.getElementById(`ent-del-col-${entityType}`);
+    const sel     = document.getElementById(`ent-del-sel-${entityType}`);
+    if (colPick && sel) {
+      sel.innerHTML = headers.map((h) => `<option value="${escHtml(h)}"${h === colAuto ? ' selected' : ''}>${escHtml(h)}</option>`).join('');
+      colPick.classList.remove('hidden');
+    }
+  }
+
+  entDelUpdatePreview();
+}
+
+/** Remove a file from a delete tile. */
+function entDelRemoveFile(entityType) {
+  delete entDelete.files[entityType];
+
+  const tile = document.getElementById(`ent-del-tile-${entityType}`);
+  if (tile) {
+    tile.classList.remove('has-file');
+    tile.querySelector('.ent-tile-status').textContent = 'No file selected';
+    tile.querySelector('.ent-tile-remove').classList.add('hidden');
+    const colPick = document.getElementById(`ent-del-col-${entityType}`);
+    if (colPick) colPick.classList.add('hidden');
+  }
+
+  entDelUpdatePreview();
+}
+
+/** Toggle button/progress states while delete SSE is running. */
+function entDelSetRunning(running) {
+  const btnRun  = document.getElementById('btn-ent-delete-run');
+  const btnStop = document.getElementById('btn-ent-delete-stop');
+  if (btnRun)  btnRun.disabled = running;
+  if (btnStop) btnStop.classList.toggle('hidden', !running);
+
+  if (running) {
+    entDelAppendLog.reset();
+    document.getElementById('btn-ent-delete-download-log')?.classList.add('hidden');
+    document.getElementById('ent-delete-results')?.classList.add('hidden');
+    document.getElementById('ent-delete-step-run')?.classList.remove('hidden');
+    document.getElementById('ent-delete-step-run')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    entDelSetProgress(0, '');
+    setText('ent-delete-run-title', 'Deleting…');
+  } else {
+    document.getElementById('btn-ent-delete-download-log')?.classList.remove('hidden');
+  }
+}
+
+function entDelSetProgress(pct, msg) {
+  const bar = document.getElementById('ent-delete-progress-bar');
+  if (bar) bar.style.width = `${Math.min(100, pct)}%`;
+  const status = document.getElementById('ent-delete-status');
+  if (status) status.textContent = msg || '';
+}
+
+/** Render the results summary table on completion. */
+function entDelShowComplete(data) {
+  const resultsEl = document.getElementById('ent-delete-results');
+  if (!resultsEl) return;
+
+  const { perType = [], total = 0, deleted = 0, skipped = 0, errors = 0 } = data;
+  const hasErrors = errors > 0;
+  const alertClass = hasErrors ? 'alert-warn' : 'alert-ok';
+  const icon = hasErrors ? '⚠️' : '✅';
+
+  const rows = perType.map((e) =>
+    `<tr>
+      <td>${ENT_LABELS[e.type] || e.type}</td>
+      <td>${e.total}</td>
+      <td>${e.deleted}</td>
+      <td>${e.skipped}</td>
+      <td>${e.errors}</td>
+    </tr>`
+  ).join('');
+
+  resultsEl.innerHTML = `
+    <div class="alert ${alertClass}">
+      <span class="alert-icon">${icon}</span>
+      <span>${deleted} deleted · ${skipped} skipped · ${errors} error(s) · ${total} in files</span>
+    </div>
+    ${rows ? `<table class="mapping-table mt-12">
+      <thead><tr><th>Entity type</th><th>Total</th><th>Deleted</th><th>Skipped</th><th>Errors</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>` : ''}
+  `;
+  resultsEl.classList.remove('hidden');
+  setText('ent-delete-run-title', hasErrors ? 'Deletion complete (with errors)' : 'Deletion complete');
+}
+
+/** Build the request payload from current entDelete state. */
+function entDelBuildPayload() {
+  const files = {};
+  for (const [type, f] of Object.entries(entDelete.files)) {
+    const sel = document.getElementById(`ent-del-sel-${type}`);
+    const uuidColumn = sel ? sel.value : f.uuidColumn;
+    files[type] = { csvText: f.csvText, uuidColumn };
+  }
+  const safeMode = document.getElementById('ent-delete-safe-mode')?.checked !== false;
+  return { files, options: { safeMode } };
+}
+
+/** Run the delete via SSE. */
+function runEntityDelete() {
+  if (!Object.keys(entDelete.files).length) return;
+  const payload = entDelBuildPayload();
+  entDelSetRunning(true);
+  entDelete.controller = subscribeSSE('/api/entities/delete/by-csv', payload, {
+    onProgress: ({ message, percent }) => entDelSetProgress(percent || 0, message || ''),
+    onLog:      (e) => entDelAppendLog(e.level, e.message, e.detail),
+    onComplete: (data) => { entDelSetRunning(false); entDelShowComplete(data); },
+    onError:    (msg) => {
+      entDelSetRunning(false);
+      const resultsEl = document.getElementById('ent-delete-results');
+      if (resultsEl) {
+        resultsEl.innerHTML = `<div class="alert alert-danger"><span class="alert-icon">❌</span><span>${escHtml(msg)}</span></div>`;
+        resultsEl.classList.remove('hidden');
+      }
+      setText('ent-delete-run-title', 'Deletion failed');
+    },
+    onAbort: () => {
+      entDelAppendLog('warn', 'Deletion stopped by user');
+      entDelSetRunning(false);
+      setText('ent-delete-run-title', 'Deletion stopped');
+    },
+  });
+}
+
+/** Initialize the 9-tile delete file picker grid. */
+function initEntitiesDeleteView() {
+  const grid = document.getElementById('ent-delete-file-grid');
+  if (!grid || grid.dataset.init) return;
+  grid.dataset.init = '1';
+
+  grid.innerHTML = ENT_ORDER.map((type) => `
+    <div class="ent-file-tile" id="ent-del-tile-${type}">
+      <div class="ent-tile-header">
+        <span class="ent-tile-name">${ENT_LABELS[type]}</span>
+        <button class="ent-tile-remove hidden" data-del-remove="${type}" title="Remove">✕</button>
+      </div>
+      <div class="ent-tile-drop" data-del-drop="${type}">
+        <span class="ent-tile-icon">📄</span>
+        <span class="ent-tile-status">No file selected</span>
+      </div>
+      <div class="ent-del-col-pick hidden" id="ent-del-col-${type}">
+        <span class="ent-del-col-label">ID column</span>
+        <select id="ent-del-sel-${type}"></select>
+      </div>
+      <input type="file" accept=".csv,text/csv" class="hidden" id="ent-del-file-${type}" />
+    </div>
+  `).join('');
+
+  ENT_ORDER.forEach((type) => {
+    const dropZone  = grid.querySelector(`[data-del-drop="${type}"]`);
+    const fileInput = document.getElementById(`ent-del-file-${type}`);
+    const sel       = document.getElementById(`ent-del-sel-${type}`);
+
+    dropZone.addEventListener('click', () => fileInput.click());
+    fileInput.addEventListener('change', () => {
+      if (fileInput.files[0]) entDelHandleFile(type, fileInput.files[0]);
+      fileInput.value = '';
+    });
+    dropZone.addEventListener('dragover',  (e) => { e.preventDefault(); dropZone.classList.add('drag-over'); });
+    dropZone.addEventListener('dragleave', ()  => dropZone.classList.remove('drag-over'));
+    dropZone.addEventListener('drop', (e) => {
+      e.preventDefault();
+      dropZone.classList.remove('drag-over');
+      if (e.dataTransfer.files[0]) entDelHandleFile(type, e.dataTransfer.files[0]);
+    });
+
+    // Update uuidColumn in state when column picker changes; refresh preview table
+    if (sel) {
+      sel.addEventListener('change', () => {
+        if (entDelete.files[type]) entDelete.files[type].uuidColumn = sel.value;
+        entDelUpdatePreview();
+      });
+    }
+  });
+
+  grid.addEventListener('click', (e) => {
+    const btn = e.target.closest('[data-del-remove]');
+    if (btn) { e.stopPropagation(); entDelRemoveFile(btn.dataset.delRemove); }
+  });
+}
+
 // ── Navigation ────────────────────────────────────────────
 
 function setupEntitiesNav() {
@@ -1176,8 +1493,7 @@ function setupEntitiesNav() {
     'nav-entities-templates':     'entities-templates',
     'nav-entities-export':        'entities-export',
     'nav-entities-import':        'entities-import',
-    'nav-entities-relationships': 'entities-relationships',
-    'nav-entities-migration':     'entities-migration',
+    'nav-entities-delete':        'entities-delete',
   };
 
   Object.entries(navMap).forEach(([btnId, viewName]) => {
@@ -1196,6 +1512,7 @@ function setupEntitiesNav() {
 document.addEventListener('DOMContentLoaded', () => {
   initEntitiesTemplatesView();
   initEntitiesImportView();
+  initEntitiesDeleteView();
   setupEntitiesNav();
 
   // Templates: download selected button
@@ -1226,5 +1543,64 @@ document.addEventListener('DOMContentLoaded', () => {
     btnFixRels.addEventListener('click', () => requireToken(runEntityFixRelationships));
   }
 
+  // Delete: Run deletion button
+  const btnDelRun = document.getElementById('btn-ent-delete-run');
+  if (btnDelRun) {
+    btnDelRun.addEventListener('click', () => requireToken(runEntityDelete));
+  }
+
+  // Delete: Stop button
+  const btnDelStop = document.getElementById('btn-ent-delete-stop');
+  if (btnDelStop) {
+    btnDelStop.addEventListener('click', () => entDelete.controller?.abort());
+  }
+
+  // Import: Download log button
+  const btnImportDownloadLog = document.getElementById('btn-ent-import-download-log');
+  if (btnImportDownloadLog) {
+    btnImportDownloadLog.addEventListener('click', () => {
+      downloadLogCsv(_entLogAppendBase, 'entities-import');
+    });
+  }
+
+  // Delete: Download log button
+  const btnDeleteDownloadLog = document.getElementById('btn-ent-delete-download-log');
+  if (btnDeleteDownloadLog) {
+    btnDeleteDownloadLog.addEventListener('click', () => {
+      downloadLogCsv(_entDelLogBase, 'entities-delete');
+    });
+  }
+
   initEntitiesExportView();
+
+  window.addEventListener('pb:disconnect', () => {
+    // Reset all uploaded file tiles
+    ENT_ORDER.forEach((type) => {
+      if (!entImport.files[type]) return;
+      const tile = document.getElementById(`ent-tile-${type}`);
+      if (tile) {
+        tile.classList.remove('has-file');
+        tile.querySelector('.ent-tile-status').textContent = 'No file selected';
+        tile.querySelector('.ent-tile-remove').classList.add('hidden');
+      }
+      const fileInput = document.getElementById(`ent-file-input-${type}`);
+      if (fileInput) fileInput.value = '';
+    });
+    // Clear in-memory import state
+    entImport.files = {};
+    entImport.configs = null;
+    entImport.mappings = {};
+    entImport.activeTab = null;
+    // Hide mapping/options/log panels
+    ['ent-import-step-map', 'ent-import-step-options', 'ent-import-step-log',
+     'ent-import-error', 'ent-import-summary-box', 'ent-validate-results'].forEach((id) => {
+      const el = document.getElementById(id); if (el) el.classList.add('hidden');
+    });
+    const tabBar  = document.getElementById('ent-import-tab-bar');
+    const content = document.getElementById('ent-import-tab-content');
+    if (tabBar)  tabBar.innerHTML  = '';
+    if (content) content.innerHTML = '';
+    // Reset export panel
+    resetEntExport();
+  });
 });

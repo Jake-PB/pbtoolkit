@@ -201,6 +201,9 @@
           <button class="nav-item" data-view="companies-delete-all" id="nav-companies-delete-all">
             <span class="icon">⚠️</span> Delete all companies
           </button>
+          <button class="nav-item" data-view="companies-source-migration" id="nav-companies-source-migration">
+            <span class="icon">🔄</span> Source migration
+          </button>
         </div>
 
         <!-- Notes nav items -->
@@ -232,6 +235,9 @@
           </button>
           <button class="nav-item" data-view="entities-import" id="nav-entities-import">
             <span class="icon">📥</span> Import
+          </button>
+          <button class="nav-item" data-view="entities-delete" id="nav-entities-delete">
+            <span class="icon">🗑</span> Delete from CSV
           </button>
         </div>
 
@@ -272,6 +278,15 @@
                   <span id="export-progress-msg">Starting…</span>
                   <span id="export-progress-pct">0%</span>
                 </div>
+                <button class="btn btn-ghost mt-8" id="btn-stop-export">⏹ Stop</button>
+              </div>
+
+              <div id="export-stopped" class="hidden">
+                <div class="alert alert-warn">
+                  <span class="alert-icon">⏹</span>
+                  <span>Export stopped by user.</span>
+                </div>
+                <button class="btn btn-secondary mt-16" id="btn-export-stopped-again">Export again</button>
               </div>
 
               <div id="export-done" class="hidden">
@@ -279,7 +294,7 @@
                   <span class="alert-icon">✅</span>
                   <span id="export-done-msg"></span>
                 </div>
-                <button class="btn btn-primary mt-16" id="btn-download-csv">⬇️ Download CSV</button>
+                <button class="btn btn-primary mt-16" id="btn-download-csv">⬇ Download CSV</button>
                 <button class="btn btn-secondary mt-8" id="btn-export-again">Export again</button>
               </div>
 
@@ -329,39 +344,21 @@
             <hr class="panel-divider mt-12" />
             <div class="panel-body">
 
-              <!-- Base field mapping -->
-              <div class="mb-16">
-                <label>Base fields</label>
-                <div class="text-sm text-muted mb-16">Map your CSV columns to Productboard company fields.</div>
-                <table class="mapping-table">
-                  <thead>
-                    <tr>
-                      <th>PB Field</th>
-                      <th>CSV Column</th>
-                      <th>Required</th>
-                    </tr>
-                  </thead>
-                  <tbody id="base-field-map-rows"></tbody>
-                </table>
-              </div>
+              <!-- Field mapping -->
+              <div class="text-sm text-muted mb-16">Map your CSV columns to Productboard company fields.</div>
+              <div id="custom-fields-loading" class="text-sm text-muted mb-8 hidden">Loading custom fields…</div>
+              <table class="mapping-table" id="co-mapping-table">
+                <thead>
+                  <tr>
+                    <th>PB Field</th>
+                    <th>Type</th>
+                    <th>CSV Column</th>
+                  </tr>
+                </thead>
+                <tbody id="co-mapping-rows"></tbody>
+              </table>
 
-              <!-- Custom field mapping -->
-              <div id="custom-fields-section">
-                <label>Custom fields <span class="label-hint">— map CSV columns to custom fields</span></label>
-                <div id="custom-fields-loading" class="text-sm text-muted mt-8">Loading custom fields…</div>
-                <table class="mapping-table mt-8 hidden" id="custom-field-table">
-                  <thead>
-                    <tr>
-                      <th>PB Custom Field</th>
-                      <th>Type</th>
-                      <th>CSV Column</th>
-                    </tr>
-                  </thead>
-                  <tbody id="custom-field-map-rows"></tbody>
-                </table>
-              </div>
-
-              <div id="unmapped-warning" class="alert alert-warn hidden mt-12">
+<div id="unmapped-warning" class="alert alert-warn hidden mt-12">
                 <span class="alert-icon">⚠️</span>
                 <span id="unmapped-warning-msg"></span>
               </div>
@@ -376,13 +373,32 @@
             </div>
             <hr class="panel-divider mt-12" />
             <div class="panel-body">
-              <label class="checkbox-row" id="clear-empty-label">
-                <input type="checkbox" id="clear-empty-fields" />
-                Clear empty custom field values in Productboard (delete value if CSV cell is empty)
-              </label>
+              <div class="ent-options-grid">
+                <!-- Multi-select update mode -->
+                <div>
+                  <label class="label-bold">Multi-select update mode</label>
+                  <div class="text-sm text-muted mb-8">Applies to tags, teams, and multi-select custom fields on PATCH rows only.</div>
+                  <div class="flex flex-col gap-4">
+                    <label class="radio-label"><input type="radio" name="imp-ms-mode" value="set" checked> Set — replace all items</label>
+                    <label class="radio-label"><input type="radio" name="imp-ms-mode" value="addItems"> Add items</label>
+                    <label class="radio-label"><input type="radio" name="imp-ms-mode" value="removeItems"> Remove items</label>
+                  </div>
+                </div>
+                <!-- Misc toggles -->
+                <div class="flex flex-col gap-12">
+                  <label class="checkbox-row">
+                    <input type="checkbox" id="imp-bypass-empty" />
+                    Bypass empty cells <span class="info-icon" data-tip="Skip the field on update if the CSV cell is blank">i</span>
+                  </label>
+                  <label class="checkbox-row">
+                    <input type="checkbox" id="imp-bypass-html" />
+                    Bypass HTML formatter <span class="info-icon" data-tip="Send description HTML as-is, without sanitization">i</span>
+                  </label>
+                </div>
+              </div>
               <hr class="panel-divider mt-16" />
               <div class="flex gap-8 mt-16 items-center flex-wrap">
-                <button class="btn btn-secondary" id="btn-validate">✅ Validate first</button>
+                <button class="btn btn-secondary" id="btn-validate">✔ Validate</button>
                 <button class="btn btn-primary" id="btn-run-import">📥 Import</button>
                 <button class="btn btn-ghost hidden" id="btn-stop-import">⏹ Stop</button>
               </div>
@@ -400,10 +416,6 @@
                 <div class="alert alert-ok">
                   <span class="alert-icon">✅</span>
                   <span id="validate-ok-msg"></span>
-                </div>
-                <div class="flex gap-8 mt-16">
-                  <button class="btn btn-primary" id="btn-run-after-validate">📥 Run import</button>
-                  <button class="btn btn-secondary" id="btn-back-to-map">← Back to mapping</button>
                 </div>
               </div>
               <div id="validate-errors" class="hidden">
@@ -450,6 +462,7 @@
                 <div class="live-log-header">
                   <span>Live log</span>
                   <span id="live-log-counts" class="live-log-counts"></span>
+                  <button id="btn-import-download-log" class="btn btn-ghost btn-sm hidden" style="margin-left:auto">↓ Download log</button>
                 </div>
                 <div id="live-log-entries" class="live-log-scroll"></div>
               </div>
@@ -501,7 +514,7 @@
             <hr class="panel-divider mt-12" />
             <div class="panel-body">
               <div class="mb-16">
-                <label>Which column contains the company UUIDs?</label>
+                <label for="companies-delete-uuid-column">Which column contains the company UUIDs?</label>
                 <select id="companies-delete-uuid-column" class="mt-8" style="width:100%;max-width:320px;padding:6px 8px;border:1px solid var(--c-border);border-radius:6px;font-size:14px"></select>
               </div>
               <div id="companies-delete-csv-preview" class="mb-16 text-sm text-muted font-mono hidden"></div>
@@ -528,7 +541,10 @@
                   <span id="companies-delete-csv-progress-pct">0%</span>
                 </div>
                 <div id="companies-delete-csv-live-log" class="live-log hidden mt-16">
-                  <div class="live-log-header"><span>Live log</span></div>
+                  <div class="live-log-header">
+                    <span>Live log</span>
+                    <button id="btn-companies-delete-download-log" class="btn btn-ghost btn-sm hidden" style="margin-left:auto">↓ Download log</button>
+                  </div>
                   <div id="companies-delete-csv-log-entries" class="live-log-scroll"></div>
                 </div>
               </div>
@@ -556,7 +572,7 @@
                   <span class="alert-icon">⛔</span>
                   <span><strong>This will permanently delete every company in your workspace.</strong> This action cannot be undone and there is no way to recover deleted companies. Use with extreme caution — ideally export first.</span>
                 </div>
-                <p class="text-sm text-muted mb-16">Type <strong>DELETE</strong> in the box below to enable the button.</p>
+                <label for="companies-delete-all-confirm-input" class="text-sm text-muted mb-16" style="display:block">Type <strong>DELETE</strong> in the box below to enable the button.</label>
                 <input type="text" id="companies-delete-all-confirm-input" placeholder="Type DELETE to confirm" autocomplete="off"
                   style="display:block;width:100%;max-width:320px;padding:8px 10px;border:1px solid var(--c-border);border-radius:6px;font-size:14px;margin-bottom:12px" />
                 <button class="btn btn-danger" id="btn-companies-delete-all-run" disabled>⛔ Delete all companies</button>
@@ -584,6 +600,94 @@
             </div>
           </div>
         </div><!-- /view-companies-delete-all -->
+
+        <!-- ── COMPANIES SOURCE MIGRATION ── -->
+        <div id="view-companies-source-migration" class="hidden">
+
+          <!-- ── V1 → V2 panel ── -->
+          <div class="panel">
+            <div class="panel-header">
+              <h2 class="panel-title">Source migration</h2>
+              <div class="panel-subtitle">Sync source identity fields between the legacy v1 API and v2 metadata.</div>
+            </div>
+            <hr class="panel-divider mt-12" />
+            <div class="panel-body">
+
+              <h3 class="text-sm font-semibold mb-8" style="margin-top:0">V1 → V2 upcopy</h3>
+              <p class="text-sm text-muted mb-16">Copies <code>sourceOrigin</code> and <code>sourceRecordId</code> from the legacy v1 API into v2 metadata (<code>externalSystemName</code> / <code>externalRecordId</code>) for every company that has v1 source data. Overwrites any existing v2 source metadata.</p>
+
+              <!-- idle -->
+              <div id="csm-v1v2-idle">
+                <button class="btn btn-primary" id="btn-csm-v1v2-run">🔄 Run V1 → V2 migration</button>
+              </div>
+
+              <!-- running -->
+              <div id="csm-v1v2-running" class="hidden">
+                <div class="flex items-center justify-between mb-8">
+                  <span class="text-sm text-muted" id="csm-v1v2-progress-msg">Starting…</span>
+                  <div class="flex items-center gap-8">
+                    <span class="text-sm text-muted" id="csm-v1v2-progress-pct">0%</span>
+                    <button class="btn btn-ghost btn-sm" id="btn-stop-csm-v1v2">⏹ Stop</button>
+                  </div>
+                </div>
+                <div class="progress-wrap">
+                  <div class="progress-bar" id="csm-v1v2-progress-bar" style="width:0%"></div>
+                </div>
+                <div id="csm-v1v2-live-log" class="live-log hidden mt-16">
+                  <div class="live-log-header"><span>Live log</span></div>
+                  <div id="csm-v1v2-log-entries" class="live-log-scroll"></div>
+                </div>
+              </div>
+
+              <!-- results -->
+              <div id="csm-v1v2-results" class="hidden">
+                <div id="csm-v1v2-summary"></div>
+                <button class="btn btn-ghost btn-sm mt-16" id="btn-csm-v1v2-again">← Run again</button>
+              </div>
+
+            </div>
+          </div>
+
+          <!-- ── V2 → V1 panel ── -->
+          <div class="panel mt-16">
+            <div class="panel-body">
+
+              <h3 class="text-sm font-semibold mb-8" style="margin-top:0">V2 → V1 downcopy</h3>
+              <p class="text-sm text-muted mb-16">Copies v2 <code>metadata.source</code> fields back into the legacy v1 <code>sourceOrigin</code> / <code>sourceRecordId</code> fields for every company that has v2 source data. Note: the v1 API may not support updating these fields for all companies — errors will be logged per company.</p>
+
+              <!-- idle -->
+              <div id="csm-v2v1-idle">
+                <button class="btn btn-secondary" id="btn-csm-v2v1-run">🔄 Run V2 → V1 downcopy</button>
+              </div>
+
+              <!-- running -->
+              <div id="csm-v2v1-running" class="hidden">
+                <div class="flex items-center justify-between mb-8">
+                  <span class="text-sm text-muted" id="csm-v2v1-progress-msg">Starting…</span>
+                  <div class="flex items-center gap-8">
+                    <span class="text-sm text-muted" id="csm-v2v1-progress-pct">0%</span>
+                    <button class="btn btn-ghost btn-sm" id="btn-stop-csm-v2v1">⏹ Stop</button>
+                  </div>
+                </div>
+                <div class="progress-wrap">
+                  <div class="progress-bar" id="csm-v2v1-progress-bar" style="width:0%"></div>
+                </div>
+                <div id="csm-v2v1-live-log" class="live-log hidden mt-16">
+                  <div class="live-log-header"><span>Live log</span></div>
+                  <div id="csm-v2v1-log-entries" class="live-log-scroll"></div>
+                </div>
+              </div>
+
+              <!-- results -->
+              <div id="csm-v2v1-results" class="hidden">
+                <div id="csm-v2v1-summary"></div>
+                <button class="btn btn-ghost btn-sm mt-16" id="btn-csm-v2v1-again">← Run again</button>
+              </div>
+
+            </div>
+          </div>
+
+        </div><!-- /view-companies-source-migration -->
 
         <!-- ════════════════════════════════════════
              NOTES VIEWS
@@ -630,10 +734,10 @@
                   </div>
 
                   <div id="notes-filter-dynamic" class="filter-sub hidden mt-12">
-                    <label class="text-sm">Export notes created in the past</label>
+                    <label class="text-sm" for="notes-filter-n">Export notes created in the past</label>
                     <div class="filter-dynamic-row mt-4">
                       <input type="number" id="notes-filter-n" min="1" value="7" style="width:72px">
-                      <select id="notes-filter-period" style="width:auto">
+                      <select id="notes-filter-period" aria-label="Period unit" style="width:auto">
                         <option value="days">days</option>
                         <option value="weeks">weeks</option>
                         <option value="months">months</option>
@@ -653,6 +757,15 @@
                   <span id="notes-export-progress-msg">Starting…</span>
                   <span id="notes-export-progress-pct">0%</span>
                 </div>
+                <button class="btn btn-ghost mt-8" id="btn-stop-notes-export">⏹ Stop</button>
+              </div>
+
+              <div id="notes-export-stopped" class="hidden">
+                <div class="alert alert-warn">
+                  <span class="alert-icon">⏹</span>
+                  <span>Export stopped by user.</span>
+                </div>
+                <button class="btn btn-secondary mt-16" id="btn-notes-export-stopped-again">Adjust criteria</button>
               </div>
 
               <div id="notes-export-done" class="hidden">
@@ -660,8 +773,8 @@
                   <span class="alert-icon">✅</span>
                   <span id="notes-export-done-msg"></span>
                 </div>
-                <button class="btn btn-primary mt-16" id="btn-notes-download-csv">⬇️ Download CSV</button>
-                <button class="btn btn-secondary mt-8" id="btn-notes-export-again">Export again</button>
+                <button class="btn btn-primary mt-16" id="btn-notes-download-csv">⬇ Download CSV</button>
+                <button class="btn btn-secondary mt-8" id="btn-notes-export-again">Adjust criteria</button>
               </div>
 
               <div id="notes-export-error" class="hidden">
@@ -716,7 +829,7 @@
 
               <table class="mapping-table">
                 <thead>
-                  <tr><th>PB Field</th><th>CSV Column</th><th>Required</th></tr>
+                  <tr><th>PB Field</th><th>CSV Column</th></tr>
                 </thead>
                 <tbody id="notes-field-map-rows"></tbody>
               </table>
@@ -749,7 +862,7 @@
               </div>
               <hr class="panel-divider mt-16" />
               <div class="flex gap-8 mt-16 items-center flex-wrap">
-                <button class="btn btn-secondary" id="btn-notes-validate">✅ Validate first</button>
+                <button class="btn btn-secondary" id="btn-notes-validate">✔ Validate</button>
                 <button class="btn btn-primary" id="btn-notes-run-import">📥 Import</button>
                 <button class="btn btn-ghost hidden" id="btn-stop-notes-import">⏹ Stop</button>
               </div>
@@ -779,10 +892,6 @@
                       <tbody id="notes-validate-warning-rows"></tbody>
                     </table>
                   </div>
-                </div>
-                <div class="flex gap-8 mt-16">
-                  <button class="btn btn-primary" id="btn-notes-run-after-validate">📥 Run import</button>
-                  <button class="btn btn-secondary" id="btn-notes-back-to-map">← Back to mapping</button>
                 </div>
               </div>
               <div id="notes-validate-errors" class="hidden">
@@ -828,6 +937,7 @@
                 <div class="live-log-header">
                   <span>Live log</span>
                   <span id="notes-live-log-counts" class="live-log-counts"></span>
+                  <button id="btn-notes-download-log" class="btn btn-ghost btn-sm hidden" style="margin-left:auto">↓ Download log</button>
                 </div>
                 <div id="notes-live-log-entries" class="live-log-scroll"></div>
               </div>
@@ -875,7 +985,7 @@
             <hr class="panel-divider mt-12" />
             <div class="panel-body">
               <div class="mb-16">
-                <label>Which column contains the PB Note UUIDs?</label>
+                <label for="notes-delete-uuid-column">Which column contains the PB Note UUIDs?</label>
                 <select id="notes-delete-uuid-column" class="mt-8" style="width:100%;max-width:320px;padding:6px 8px;border:1px solid var(--c-border);border-radius:6px;font-size:14px"></select>
               </div>
               <div id="notes-delete-csv-preview" class="mb-16 text-sm text-muted font-mono hidden"></div>
@@ -930,7 +1040,7 @@
                   <span class="alert-icon">⛔</span>
                   <span><strong>This will permanently delete every note in your workspace.</strong> This action cannot be undone and there is no way to recover deleted notes. Use with extreme caution — ideally export first.</span>
                 </div>
-                <p class="text-sm text-muted mb-16">Type <strong>DELETE</strong> in the box below to enable the button.</p>
+                <label for="notes-delete-all-confirm-input" class="text-sm text-muted mb-16" style="display:block">Type <strong>DELETE</strong> in the box below to enable the button.</label>
                 <input type="text" id="notes-delete-all-confirm-input" placeholder="Type DELETE to confirm" autocomplete="off"
                   style="display:block;width:100%;max-width:320px;padding:8px 10px;border:1px solid var(--c-border);border-radius:6px;font-size:14px;margin-bottom:12px" />
                 <button class="btn btn-danger" id="btn-notes-delete-all-run" disabled>⛔ Delete all notes</button>
@@ -991,7 +1101,7 @@
                 <input type="file" id="notes-migrate-file-input" accept=".csv,text/csv" class="hidden" />
 
                 <div class="hidden mt-16" id="notes-migrate-form">
-                  <label>Migration source name <span class="label-hint">— used as source_origin value</span></label>
+                  <label for="notes-migrate-source-name">Migration source name <span class="label-hint">— used as source_origin value</span></label>
                   <input type="text" id="notes-migrate-source-name" placeholder="e.g. workspace-v1"
                     style="display:block;width:100%;max-width:320px;padding:8px 10px;border:1px solid var(--c-border);border-radius:6px;font-size:14px;margin-top:6px" />
                   <p class="text-sm text-muted mt-8">Example: if you enter <code>acme-source</code>, the original pb_id is written to source_record_id and source_origin is set to <code>acme-source</code>. Any pre-existing source_record_id on the note is replaced.</p>
@@ -1079,6 +1189,9 @@
               <!-- ── Tab: Export ── -->
               <div id="ent-export-tab-export">
 
+                <!-- Idle / criteria state -->
+                <div id="ent-export-idle">
+
                 <!-- Migration mode toggle -->
                 <div class="mb-16">
                   <label class="flex gap-8 items-center" style="cursor:pointer">
@@ -1105,10 +1218,12 @@
                   </div>
                 </div>
 
-                <!-- Download selected -->
+                <!-- Export selected -->
                 <div class="mb-16 mt-20">
-                  <button id="btn-ent-export-selected" class="btn btn-primary">Download selected</button>
+                  <button id="btn-ent-export-selected" class="btn btn-primary">Export selected</button>
                 </div>
+
+                </div><!-- /ent-export-idle -->
 
                 <!-- Progress / log -->
                 <div id="ent-export-progress-wrap" class="hidden mt-12">
@@ -1116,11 +1231,35 @@
                     <div id="ent-export-progress-bar" class="progress-bar" style="width:0%"></div>
                   </div>
                   <div id="ent-export-status" class="text-sm text-muted"></div>
+                  <button class="btn btn-ghost mt-8" id="btn-ent-export-stop">⏹ Stop</button>
                   <div id="ent-export-log" class="live-log hidden mt-8"></div>
                 </div>
 
-                <div id="ent-export-error" class="alert alert-danger hidden mt-12">
-                  <span id="ent-export-error-msg"></span>
+                <!-- Stopped state -->
+                <div id="ent-export-stopped" class="hidden mt-12">
+                  <div class="alert alert-warn">
+                    <span class="alert-icon">⏹</span>
+                    <span>Export stopped by user.</span>
+                  </div>
+                  <button class="btn btn-secondary mt-16" id="btn-ent-export-stopped-again">Adjust criteria</button>
+                </div>
+
+                <!-- Done state -->
+                <div id="ent-export-done" class="hidden mt-12">
+                  <div class="alert alert-ok">
+                    <span class="alert-icon">✅</span>
+                    <span id="ent-export-done-msg"></span>
+                  </div>
+                  <button class="btn btn-primary mt-16" id="btn-ent-export-download-again">⬇ Download CSV</button>
+                  <button class="btn btn-secondary mt-8" id="btn-ent-export-again">Adjust criteria</button>
+                </div>
+
+                <div id="ent-export-error" class="hidden mt-12">
+                  <div class="alert alert-danger">
+                    <span class="alert-icon">⚠️</span>
+                    <span id="ent-export-error-msg"></span>
+                  </div>
+                  <button class="btn btn-secondary mt-8" id="btn-ent-export-retry">Adjust criteria</button>
                 </div>
 
               </div><!-- /ent-export-tab-export -->
@@ -1132,6 +1271,11 @@
                   Rewrites UUID ext_keys to <code>WSID-TYPE-NNN</code> and updates relationship columns cross-entity.
                   Upload CSVs exported from this tool (must include <code>pb_id</code> column for relationship rewriting). No API calls.
                 </p>
+                <div class="alert alert-warn mb-16">
+                  Relationship columns (connected links, dependencies) are only rewritten for entity types included in this upload.
+                  If you upload a single file, any cross-entity links pointing to a type you did not upload will remain as raw UUIDs.
+                  Upload all relevant entity types together for complete rewriting.
+                </div>
                 <div class="mb-16 flex gap-8 items-center">
                   <label class="text-sm text-muted" for="ent-norm-multi-workspace">Workspace code</label>
                   <input id="ent-norm-multi-workspace" type="text" placeholder="e.g. ACME" maxlength="10"
@@ -1241,7 +1385,7 @@
               <!-- Action buttons — always in the Options panel, consistent with companies & notes -->
               <div class="flex gap-8 mt-16 items-center flex-wrap">
                 <button class="btn btn-secondary" id="btn-ent-validate">✔ Validate</button>
-                <button class="btn btn-primary" id="btn-ent-run">📥 Run import</button>
+                <button class="btn btn-primary" id="btn-ent-run">📥 Import</button>
                 <button class="btn btn-ghost hidden" id="btn-ent-stop">⏹ Stop</button>
                 <span id="ent-validate-status" class="text-sm text-muted"></span>
               </div>
@@ -1280,6 +1424,7 @@
                 <div class="live-log-header">
                   <span>Live log</span>
                   <span id="ent-import-log-counts" class="live-log-counts"></span>
+                  <button id="btn-ent-import-download-log" class="btn btn-ghost btn-sm hidden" style="margin-left:auto">↓ Download log</button>
                 </div>
                 <div id="ent-import-log-entries" class="live-log-scroll"></div>
               </div>
@@ -1291,6 +1436,80 @@
           </div>
 
         </div><!-- /view-entities-import -->
+
+        <!-- ── ENTITIES DELETE ── -->
+        <div id="view-entities-delete" class="hidden">
+
+          <!-- Step 1: Upload files -->
+          <div class="panel" id="ent-delete-step-upload">
+            <div class="panel-header">
+              <h2 class="panel-title">Delete entities by CSV</h2>
+              <div class="panel-subtitle">Upload exported CSV files for each entity type you want to delete. Use the column picker on each tile to select the ID column. Entities are deleted in child-first order.</div>
+            </div>
+            <hr class="panel-divider mt-12" />
+            <div class="panel-body">
+              <div id="ent-delete-file-grid" class="ent-file-grid">
+                <!-- Rendered by JS: 9 entity-type file tiles with inline column pickers -->
+              </div>
+            </div>
+          </div>
+
+          <!-- Step 2: Preview + options (appears once ≥1 file uploaded) -->
+          <div class="panel mt-16 hidden" id="ent-delete-step-preview">
+            <div class="panel-header">
+              <h3 class="panel-title">Review &amp; run</h3>
+            </div>
+            <hr class="panel-divider mt-12" />
+            <div class="panel-body">
+              <table class="mapping-table">
+                <thead><tr><th>Entity type</th><th>Records to delete</th><th>UUID column</th></tr></thead>
+                <tbody id="ent-delete-preview-tbody"></tbody>
+              </table>
+              <div class="mt-16">
+                <label class="checkbox-row">
+                  <input type="checkbox" id="ent-delete-safe-mode" checked />
+                  Safe mode — skip entities that still have children in Productboard not included in these files
+                  <span class="info-icon" data-tip="When checked, any entity that has children outside your uploaded CSVs will be skipped rather than cascade-deleted">i</span>
+                </label>
+              </div>
+              <div class="mt-16">
+                <button class="btn btn-danger" id="btn-ent-delete-run">🗑 Run deletion</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Step 3: Run (SSE progress + log + results) -->
+          <div class="panel mt-16 hidden" id="ent-delete-step-run">
+            <div class="panel-header">
+              <h3 class="panel-title" id="ent-delete-run-title">Deleting…</h3>
+            </div>
+            <hr class="panel-divider mt-12" />
+            <div class="panel-body">
+              <div class="progress-wrap">
+                <div id="ent-delete-progress-bar" class="progress-bar" style="width:0%"></div>
+              </div>
+              <div id="ent-delete-status" class="text-sm text-muted mt-4"></div>
+
+              <!-- Results summary (shown on complete) -->
+              <div id="ent-delete-results" class="hidden mt-16"></div>
+
+              <!-- Live log -->
+              <div id="ent-delete-log" class="live-log hidden mt-16">
+                <div class="live-log-header">
+                  <span>Live log</span>
+                  <span id="ent-delete-log-counts" class="live-log-counts"></span>
+                  <button id="btn-ent-delete-download-log" class="btn btn-ghost btn-sm hidden" style="margin-left:auto">↓ Download log</button>
+                </div>
+                <div id="ent-delete-log-entries" class="live-log-scroll"></div>
+              </div>
+
+              <div class="flex gap-8 mt-16">
+                <button class="btn btn-ghost hidden" id="btn-ent-delete-stop">⏹ Stop</button>
+              </div>
+            </div>
+          </div>
+
+        </div><!-- /view-entities-delete -->
 
         <!-- ── MEMBER ACTIVITY EXPORT ── -->
         <div id="view-member-activity-export" class="hidden">
@@ -1405,7 +1624,17 @@
                   <span id="ma-progress-msg">Starting…</span>
                   <span id="ma-progress-pct">0%</span>
                 </div>
+                <button class="btn btn-ghost mt-8" id="btn-ma-stop-export">⏹ Stop</button>
               </div><!-- /ma-running -->
+
+              <!-- ── STOPPED STATE ── -->
+              <div id="ma-stopped" class="hidden">
+                <div class="alert alert-warn">
+                  <span class="alert-icon">⏹</span>
+                  <span>Export stopped by user.</span>
+                </div>
+                <button class="btn btn-secondary mt-16" id="btn-ma-export-stopped-again">Adjust criteria</button>
+              </div><!-- /ma-stopped -->
 
               <!-- ── DONE STATE ── -->
               <div id="ma-done" class="hidden">
@@ -1419,7 +1648,7 @@
                 </div>
                 <div style="display:flex;gap:8px;margin-top:16px;">
                   <button class="btn btn-primary" id="btn-ma-download">⬇ Download CSV</button>
-                  <button class="btn btn-secondary" id="btn-ma-export-again">Export again</button>
+                  <button class="btn btn-secondary" id="btn-ma-export-again">Adjust criteria</button>
                 </div>
               </div><!-- /ma-done -->
 
@@ -1429,7 +1658,7 @@
                   <span class="alert-icon">⚠️</span>
                   <span id="ma-error-msg"></span>
                 </div>
-                <button class="btn btn-secondary mt-12" id="btn-ma-export-retry">Try again</button>
+                <button class="btn btn-secondary mt-12" id="btn-ma-export-retry">Adjust criteria</button>
               </div><!-- /ma-error -->
 
             </div><!-- /panel-body -->
@@ -1446,6 +1675,8 @@
 
 <script src="csv-utils.js"></script>
 <script src="app.js"></script>
+<script src="companies-app.js"></script>
+<script src="notes-app.js"></script>
 <script src="entities-app.js"></script>
 <script src="member-activity-app.js"></script>
 

@@ -482,7 +482,7 @@ input:focus, select:focus, textarea:focus {
 }
 
 .mapping-table tr:last-child td { border-bottom: none; }
-.mapping-table select { font-size: 13px; padding: 6px 8px; }
+.mapping-table select { font-size: 13px; padding: 6px 2.5rem 6px 8px; }
 
 .col-tag {
   font-family: ui-monospace, monospace;
@@ -794,7 +794,7 @@ input:focus, select:focus, textarea:focus {
 .live-log-header {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  gap: 10px;
   padding: 8px 12px;
   background: var(--c-bg);
   border-bottom: 1px solid var(--c-border);
@@ -1001,6 +1001,12 @@ input:focus, select:focus, textarea:focus {
   border-bottom: 1px solid var(--c-border);
 }
 
+.mapping-table td .badge.badge-danger {
+  font-size: 10px;
+  padding: 1px 5px;
+  margin-left: 5px;
+}
+
 .badge-required {
   display: inline-block;
   margin-left: 6px;
@@ -1025,6 +1031,26 @@ input:focus, select:focus, textarea:focus {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 24px;
+}
+
+/* ── Entities: delete tile column picker ────────────────── */
+.ent-del-col-pick {
+  padding: 6px 10px 8px;
+  border-top: 1px solid var(--c-border);
+  background: var(--c-bg);
+}
+
+.ent-del-col-pick .ent-del-col-label {
+  font-size: 11px;
+  color: var(--c-muted);
+  display: block;
+  margin-bottom: 4px;
+}
+
+.ent-del-col-pick select {
+  width: 100%;
+  font-size: 12px;
+  padding: 3px 6px;
 }
 
 @media (max-width: 640px) {

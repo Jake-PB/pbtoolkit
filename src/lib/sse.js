@@ -16,7 +16,12 @@ function startSSE(res) {
   res.flushHeaders();
 
   const heartbeat = setInterval(() => res.write(':\n\n'), 25000);
-  res.on('close', () => clearInterval(heartbeat));
+
+  // Must listen on `res`, not `req`. req 'close' fires on HTTP half-close
+  // (request body consumed) before any rows are processed, causing premature abort.
+  // res 'close' only fires when the client actually disconnects from the SSE stream.
+  let aborted = false;
+  res.on('close', () => { clearInterval(heartbeat); aborted = true; });
 
   const send = (event, data) => {
     res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
@@ -39,6 +44,9 @@ function startSSE(res) {
 
     /** End the SSE stream */
     done: () => res.end(),
+
+    /** Returns true if the client disconnected */
+    isAborted: () => aborted,
   };
 }
 

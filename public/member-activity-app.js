@@ -2,11 +2,13 @@
 // Member Activity Export module
 // Depends on: app.js globals — $(), show(), hide(), setText(), buildHeaders(),
 //             subscribeSSE(), requireToken(), triggerDownload()
+// show()/hide() are used directly (no module-scoped wrappers needed).
 // ══════════════════════════════════════════════════════════════════════════════
 
 (function () {
   // Module state
   let maLastCsv      = null;
+  let maExportCtrl   = null;
   let maLastFilename = 'member-activity.csv';
   let maCacheReady   = false;
   let maCacheLoading = false;
@@ -16,8 +18,6 @@
 
   // ── Helpers ────────────────────────────────────────────────────────────────
 
-  function maShow(id)           { show(id); }
-  function maHide(id)           { hide(id); }
   function maText(id, t)        { setText(id, t); }
   function ma$(id)              { return $(id); }
 
@@ -118,8 +118,8 @@
 
     // Show loading state in team section
     ma$('ma-team-list').innerHTML = '<span class="text-muted" style="padding:8px 12px;display:block;font-size:12px;">Loading teams…</span>';
-    maHide('ma-team-error');
-    maHide('ma-obfuscated-warn');
+    hide('ma-team-error');
+    hide('ma-obfuscated-warn');
     ma$('btn-ma-export').disabled = true;
 
     const url = '/api/member-activity/metadata' + (refresh ? '?refresh=true' : '');
@@ -133,7 +133,7 @@
         }
         renderTeamList(data.teams || []);
         if (data.obfuscated) {
-          maShow('ma-obfuscated-warn');
+          show('ma-obfuscated-warn');
         }
         maText('ma-member-count', data.memberCount ? `${data.memberCount} members loaded` : '');
         maCacheReady = true;
@@ -147,7 +147,7 @@
 
   function showMaTeamError(msg) {
     maText('ma-team-error-msg', msg);
-    maShow('ma-team-error');
+    show('ma-team-error');
     ma$('ma-team-list').innerHTML = '';
     ma$('btn-ma-export').disabled = true;
   }
@@ -155,11 +155,12 @@
   // ── Export ─────────────────────────────────────────────────────────────────
 
   function resetMaExport() {
-    maShow('ma-idle');
-    maHide('ma-running');
-    maHide('ma-done');
-    maHide('ma-error');
-    maHide('ma-zero-activity-alert');
+    show('ma-idle');
+    hide('ma-running');
+    hide('ma-stopped');
+    hide('ma-done');
+    hide('ma-error');
+    hide('ma-zero-activity-alert');
   }
 
   function startMaExport() {
@@ -181,13 +182,14 @@
     const rawMode        = ma$('ma-raw-mode').checked;
 
     // Switch to running state
-    maHide('ma-idle');
-    maShow('ma-running');
-    maHide('ma-done');
-    maHide('ma-error');
+    hide('ma-idle');
+    show('ma-running');
+    hide('ma-stopped');
+    hide('ma-done');
+    hide('ma-error');
     setMaProgress('Starting export…', 0);
 
-    subscribeSSE('/api/member-activity/export', {
+    maExportCtrl = subscribeSSE('/api/member-activity/export', {
       dateFrom, dateTo, roles, teamIds, activeFilter,
       includeZeroActivity: includeZero,
       rawMode,
@@ -199,29 +201,44 @@
         maLastCsv      = data.csv;
         maLastFilename = data.filename || 'member-activity.csv';
 
-        maHide('ma-running');
-        maShow('ma-done');
-        maText('ma-done-msg', `Exported ${data.count.toLocaleString()} rows. Ready to download.`);
+        hide('ma-running');
+        show('ma-done');
+
+        if (data.count === 0) {
+          maText('ma-done-msg', data.zeroMessage || 'No results found — the export file is empty.');
+          hide('ma-zero-activity-alert');
+          hide('btn-ma-download');
+          return;
+        }
+
+        show('btn-ma-download');
+        triggerDownload(new Blob([maLastCsv], { type: 'text/csv;charset=utf-8;' }), maLastFilename);
+        maText('ma-done-msg', `Exported ${data.count.toLocaleString()} rows. Download started.`);
 
         if (data.zeroActivityPaidCount > 0) {
           maText(
             'ma-zero-activity-msg',
             `You have ${data.zeroActivityPaidCount} member${data.zeroActivityPaidCount === 1 ? '' : 's'} with 0 activity on maker/admin seats. Consider reviewing their license allocation or providing enablement support.`
           );
-          maShow('ma-zero-activity-alert');
+          show('ma-zero-activity-alert');
         } else {
-          maHide('ma-zero-activity-alert');
+          hide('ma-zero-activity-alert');
         }
       },
       onError(msg) {
-        maHide('ma-running');
+        hide('ma-running');
         maText('ma-error-msg', msg || 'Export failed. Please try again.');
-        maShow('ma-error');
+        show('ma-error');
       },
       onLog(data) {
         if (data.level === 'warn') {
           setMaProgress(data.message, null);
         }
+      },
+      onAbort() {
+        hide('ma-running');
+        show('ma-stopped');
+        maExportCtrl = null;
       },
     });
   }
@@ -270,8 +287,10 @@
 
     // Buttons
     ma$('btn-ma-export').addEventListener('click', () => requireToken(startMaExport));
+    ma$('btn-ma-stop-export').addEventListener('click', () => { maExportCtrl?.abort(); maExportCtrl = null; });
     ma$('btn-ma-export-again').addEventListener('click', resetMaExport);
-    ma$('btn-ma-export-retry').addEventListener('click', () => requireToken(startMaExport));
+    ma$('btn-ma-export-stopped-again').addEventListener('click', resetMaExport);
+    ma$('btn-ma-export-retry').addEventListener('click', resetMaExport);
     ma$('btn-ma-refresh').addEventListener('click', () => loadMaMetadata(true));
     ma$('btn-ma-download').addEventListener('click', () => {
       if (!maLastCsv) return;
@@ -290,6 +309,15 @@
   function maReloadIfNeeded() {
     if (!maCacheReady && !maCacheLoading) loadMaMetadata(false);
   }
+
+  window.addEventListener('pb:disconnect', () => {
+    maLastCsv      = null;
+    maLastFilename = 'member-activity.csv';
+    maCacheReady   = false;
+    maCacheLoading = false;
+    maTeamData     = [];
+    resetMaExport();
+  });
 
   // Expose to global scope for app.js
   window.initMemberActivityModule = initMemberActivityModule;

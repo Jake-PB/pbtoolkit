@@ -5,6 +5,20 @@
 
 const BASE_US = 'https://api.productboard.com';
 const BASE_EU = 'https://api.eu.productboard.com';
+// Allow test env to redirect API calls to a local mock server
+const PB_API_BASE_URL_OVERRIDE = () => process.env.PB_API_BASE_URL || null;
+
+/**
+ * Extract pageCursor value from a links.next URL or path string.
+ * Works with full URLs, relative paths, and internal service URLs.
+ * @param {string|null} nextLink
+ * @returns {string|null}
+ */
+function extractCursor(nextLink) {
+  if (!nextLink) return null;
+  const match = String(nextLink).match(/pageCursor=([^&]+)/);
+  return match ? decodeURIComponent(match[1]) : null;
+}
 
 /**
  * Create a PB API client bound to a specific token and datacenter.
@@ -13,7 +27,7 @@ const BASE_EU = 'https://api.eu.productboard.com';
  * @returns {object} Client with fetch/retry methods and rate limiter state
  */
 function createClient(token, useEu = false) {
-  const baseUrl = useEu ? BASE_EU : BASE_US;
+  const baseUrl = PB_API_BASE_URL_OVERRIDE() || (useEu ? BASE_EU : BASE_US);
 
   // Rate limiter state — per client instance (per request lifecycle)
   const rl = {
@@ -66,13 +80,14 @@ function createClient(token, useEu = false) {
 
     const url = path.startsWith('http') ? path : `${baseUrl}${path.startsWith('/') ? '' : '/'}${path}`;
 
+    const isV2 = path.includes('/v2/');
     const opts = {
       method: method.toUpperCase(),
       headers: {
         Authorization: `Bearer ${token}`,
         Accept: 'application/json',
         'Content-Type': 'application/json',
-        'X-Version': '1',
+        ...(!isV2 && { 'X-Version': '1' }),
       },
     };
     if (body !== undefined) opts.body = JSON.stringify(body);
@@ -150,4 +165,56 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-module.exports = { createClient };
+/**
+ * Fetch all pages from POST /v2/entities/search using cursor pagination.
+ * Cursor is passed in the request body as body.data.pageCursor (confirmed pattern
+ * from notes.js migration cache — same endpoint, same schema).
+ *
+ * @param {Function} pbFetch   - bound pbFetch from createClient
+ * @param {Function} withRetry - bound withRetry from createClient
+ * @param {object}   body      - base request body, e.g. { data: { types: ['company'] } }
+ * @param {string}   label     - label for retry logging
+ * @returns {Promise<object[]>} all items across all pages
+ */
+async function fetchAllEntitiesPost(pbFetch, withRetry, body, label) {
+  const items = [];
+  let cursor = null;
+  do {
+    const url = cursor
+      ? `/v2/entities/search?pageCursor=${encodeURIComponent(cursor)}`
+      : '/v2/entities/search';
+    const r = await withRetry(() => pbFetch('post', url, body), label);
+    items.push(...(r.data || []));
+    cursor = extractCursor(r.links?.next);
+  } while (cursor);
+  return items;
+}
+
+/**
+ * Fetch all pages of an offset-paginated v1 API endpoint.
+ * Stops when a page returns fewer items than the limit.
+ * @param {Function} pbFetch   - bound pbFetch from createClient
+ * @param {Function} withRetry - bound withRetry from createClient
+ * @param {string}   basePath  - path without pagination params, e.g. '/users'
+ * @param {Function} onPage    - callback(data: object[], pageIndex: number) called per page
+ * @param {number}   [limit]   - page size (default 100)
+ */
+async function paginateOffset(pbFetch, withRetry, basePath, onPage, limit = 100) {
+  let offset = 0;
+  let pageIndex = 0;
+  const sep = basePath.includes('?') ? '&' : '?';
+  while (true) {
+    const r = await withRetry(
+      () => pbFetch('get', `${basePath}${sep}pageLimit=${limit}&pageOffset=${offset}`),
+      `${basePath} offset ${offset}`
+    );
+    const data = r.data || [];
+    if (!data.length) break;
+    await onPage(data, pageIndex);
+    if (data.length < limit) break;
+    offset += limit;
+    pageIndex++;
+  }
+}
+
+module.exports = { createClient, extractCursor, fetchAllEntitiesPost, paginateOffset };

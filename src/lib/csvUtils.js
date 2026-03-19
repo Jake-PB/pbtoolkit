@@ -39,7 +39,7 @@ function generateCSV(rows, fields, headers) {
     })
   );
 
-  return Papa.unparse({ fields: headers, data: dataRows });
+  return '\uFEFF' + Papa.unparse({ fields: headers, data: dataRows });
 }
 
 /**
@@ -53,4 +53,17 @@ function generateCSVFromColumns(rows, colDefs) {
   return generateCSV(rows, colDefs.map((c) => c.key), colDefs.map((c) => c.label));
 }
 
-module.exports = { parseCSV, generateCSV, generateCSVFromColumns };
+/**
+ * Safely read a cell value from a CSV row by column name.
+ * Returns '' if the column name is missing, row is null, or value is null/undefined.
+ * @param {object} row
+ * @param {string} colName
+ * @returns {string}
+ */
+function cell(row, colName) {
+  if (!colName || !row) return '';
+  const val = row[colName];
+  return val == null ? '' : String(val).trim();
+}
+
+module.exports = { parseCSV, generateCSV, generateCSVFromColumns, cell };

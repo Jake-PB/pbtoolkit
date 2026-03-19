@@ -7,8 +7,8 @@
  * - UUID extraction utility for custom field column headers
  */
 const Papa = require('papaparse');
-
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const { cell } = require('../../lib/csvUtils');
+const { UUID_RE } = require('../../lib/constants');
 
 /**
  * Parse an entity CSV string.
@@ -38,16 +38,6 @@ function extractCustomFieldId(header) {
   const m = String(header).match(/\[([^\]]+)\]$/);
   if (!m) return null;
   return UUID_RE.test(m[1].trim()) ? m[1].trim() : null;
-}
-
-/**
- * Safely read a cell value from a row object by column header.
- * Returns empty string if column not found or value is null/undefined.
- */
-function cell(row, colHeader) {
-  if (!colHeader || !row) return '';
-  const val = row[colHeader];
-  return val == null ? '' : String(val).trim();
 }
 
 module.exports = { parseEntityCsv, extractCustomFieldId, cell };

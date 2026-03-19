@@ -139,7 +139,7 @@ async function runImport(files, mappings, configs, options, pbFetch, withRetry, 
               `patch:${type}`,
             );
             typeUpdated++;
-            onLog('success', `Row ${rowNum}: Updated ${type} ${row._pbId}`, { entityType: type });
+            onLog('success', `Row ${rowNum}: Updated ${type} ${row._pbId}`, { entityType: type, uuid: row._pbId, row: rowNum });
           } else {
             // ── CREATE ─────────────────────────────────────────────────────
             // Auto-generate ext_key if requested and not already set
@@ -167,12 +167,12 @@ async function runImport(files, mappings, configs, options, pbFetch, withRetry, 
             }
 
             typeCreated++;
-            onLog('success', `Row ${rowNum}: Created ${type} → ${newPbId}${row._extKey ? ` (${row._extKey})` : ''}`, { entityType: type });
+            onLog('success', `Row ${rowNum}: Created ${type} → ${newPbId}${row._extKey ? ` (${row._extKey})` : ''}`, { entityType: type, uuid: newPbId, row: rowNum });
           }
         } catch (err) {
           typeErrors++;
           const msg = parseApiError(err);
-          onLog('error', `Row ${rowNum}: ${msg}`, { entityType: type });
+          onLog('error', `Row ${rowNum}: ${msg}`, { entityType: type, row: rowNum });
         }
       }
 

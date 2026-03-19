@@ -54,9 +54,9 @@ Open the app in a browser. You can browse the tool list without a token, but a *
 
 - The token lives only in `sessionStorage` — it is never persisted to disk or sent anywhere except directly to the Productboard API.
 - Select **EU datacenter** if your Productboard workspace is hosted on `api.eu.productboard.com`. Tokens are region-bound; switching datacenter requires re-authentication.
-- The token is validated on connect by making a test call to `/api/fields`. An incorrect token shows an error before you can proceed.
+- The token is validated on connect by making a test API call. An incorrect token shows an error before you can proceed.
 
-To disconnect, click **Disconnect** in the top-right corner. This clears the session.
+To disconnect, click **Disconnect** in the top-right corner. This clears the session and resets all module pages — file uploads, export results, and any in-progress state are cleared.
 
 ---
 
@@ -83,9 +83,11 @@ Fetches all companies and generates a downloadable CSV.
 | Company Name | `company.name` |
 | Domain | `company.domain` |
 | Description | `company.description` |
-| Source Origin | `company.source.origin` |
-| Source Record ID | `company.source.record_id` |
-| *(one column per custom field)* | fetched per company |
+| Source Origin *(v1 — deprecated)* | `company.sourceOrigin` (v1 API) |
+| Source Record ID *(v1 — deprecated)* | `company.sourceRecordId` (v1 API) |
+| External System Name *(v2)* | `metadata.source.externalSystemName` |
+| External Record ID *(v2)* | `metadata.source.externalRecordId` |
+| *(one column per custom field)* | `entity.fields` |
 
 Custom field values are fetched in parallel batches of 5. Progress is streamed in real time. Output filename: `companies-YYYY-MM-DD.csv`.
 
@@ -113,7 +115,7 @@ Supported HTML tags in Description: `h1 h2 p b i u s code pre ul ol li a hr bloc
 - No UUID, domain exists → PATCH matched company
 - No UUID, domain is new → POST (create)
 
-After the company is created/updated, mapped custom fields are applied: non-empty → PUT; empty + "Clear empty" checked → DELETE.
+Standard and custom fields are written in a single v2 API call per row. Source fields (`Source Origin`, `Source Record ID`) map to `metadata.source.externalSystemName` and `metadata.source.externalRecordId` in the v2 API.
 
 A **Stop** button is available during import. The summary shows rows processed, created, updated, and error count.
 
@@ -164,6 +166,11 @@ Covers all Productboard entity types: objectives, key results, initiatives, prod
 **Normalize ext_keys tab** — Upload exported CSVs (one or more entity types) and a workspace code to rewrite UUID `ext_key`s to `WORKSPACE-TYPE-NNN` format with full cross-entity relationship rewriting. No API calls — pure CSV transform. Returns a ZIP. Useful for preparing exports from one workspace for import into another.
 
 **Import tab** — Full import pipeline. Drag-and-drop one or more entity-type CSVs, map columns with auto-detection, validate, then run. Entities are processed in dependency order (objectives → releases). Supports CREATE (new rows) and PATCH (rows with `pb_id`). After upserts, parent links and connected links (feature↔initiative, feature/initiative/subfeature↔release, etc.) are written automatically. Live log streams row-by-row results; per-entity summary on completion. Options: multi-select mode (set / addItems / removeItems), bypass empty cells, bypass HTML formatter, fiscal year start month, auto-generate ext_keys. "Fix relationships" button re-runs only the relationship pass (idempotent — 409s logged as already linked). Stop button available during run.
+
+### Known API quirks
+
+- **Objectives — `team` vs `teams` field key**: The Productboard API returns and expects the team field as `team` (singular) for objectives, while all other entity types use `teams` (plural). This is handled automatically by PBToolkit in both export (reading) and import (writing).
+- **Objectives — search endpoint**: The `POST /v2/entities/search` endpoint silently returns empty results for `objective` type despite being documented. PBToolkit uses `GET /v2/entities?type[]=objective` instead.
 
 ### What's coming
 

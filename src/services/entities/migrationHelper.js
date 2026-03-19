@@ -28,6 +28,8 @@ const CONNECTED_REL_COLS = [
   'connected_rels_ext_key',
   'connected_objs_ext_key',
   'connected_inis_ext_key',
+  'blocked_by_ext_key',
+  'blocking_ext_key',
 ];
 
 /**

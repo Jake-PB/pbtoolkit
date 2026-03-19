@@ -6,11 +6,9 @@ const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
 const slowDown = require('express-slow-down');
 
-const fieldsRouter = require('./routes/fields');
-const exportRouter = require('./routes/export');
-const importRouter = require('./routes/import');
-const notesRouter = require('./routes/notes');
+const validateRouter = require('./routes/validate');
 const companiesRouter = require('./routes/companies');
+const notesRouter = require('./routes/notes');
 const entitiesRouter = require('./routes/entities');
 const memberActivityRouter = require('./routes/memberActivity');
 
@@ -68,11 +66,9 @@ app.use(burstLimiter);
 app.use(sustainedLimiter);
 app.use(speedLimiter);
 
-app.use('/api/fields', fieldsRouter);
-app.use('/api/export', exportRouter);
-app.use('/api/import', importRouter);
+app.use('/api/validate', validateRouter);
+app.use('/api', companiesRouter);
 app.use('/api/notes', notesRouter);
-app.use('/api/companies', companiesRouter);
 app.use('/api/entities', entitiesRouter);
 app.use('/api/member-activity', memberActivityRouter);
 
@@ -87,6 +83,10 @@ app.use((err, _req, res, _next) => {
   res.status(500).json({ error: 'Internal server error.' });
 });
 
-app.listen(PORT, () => {
-  console.log(`PBToolkit running on port ${PORT}`);
-});
+if (require.main === module) {
+  app.listen(PORT, () => {
+    console.log(`PBToolkit running on port ${PORT}`);
+  });
+}
+
+module.exports = app;

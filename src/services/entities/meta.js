@@ -63,9 +63,8 @@ const HEALTH_TYPES = new Set([
   'objective', 'keyResult', 'initiative', 'feature', 'subfeature',
 ]);
 
-// Objective uses 'team' (singular) in the API body; all others use 'teams'
-// Note: configurations returns "name": "Team" for objective, "Teams" for others —
-// that display name is used directly as the CSV column header.
+// All entity types use field ID 'teams' (TeamFieldValue).
+// Objectives accept only one team (import slices to 1 item; display name in configs is "Team").
 const SINGULAR_TEAM_TYPES = new Set(['objective']);
 
 // ---------------------------------------------------------------------------
@@ -113,6 +112,11 @@ function relationshipColumns(entityType) {
   if (['initiative', 'feature', 'subfeature'].includes(entityType)) cols.push('connected_rels_ext_key');
   if (['initiative', 'feature'].includes(entityType))                cols.push('connected_objs_ext_key');
   if (entityType === 'feature')                                       cols.push('connected_inis_ext_key');
+
+  // Dependencies (isBlockedBy / isBlocking) — feature, subfeature, initiative; target = feature|subfeature|initiative
+  if (['feature', 'subfeature', 'initiative'].includes(entityType)) {
+    cols.push('blocked_by_ext_key', 'blocking_ext_key');
+  }
 
   return cols;
 }
