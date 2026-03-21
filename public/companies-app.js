@@ -12,6 +12,8 @@ let lastExportFilename = 'companies.csv';
 let companyExportCtrl = null;
 let csmV1V2Ctrl = null;
 let csmV2V1Ctrl = null;
+let clearImportDropzone = null;
+let clearDeleteDropzone = null;
 
 // Called by app.js disconnect handler
 function resetCompaniesState() {
@@ -19,9 +21,8 @@ function resetCompaniesState() {
   customFields = [];
   lastExportCSV = null;
   lastExportFilename = 'companies.csv';
-  ['file-input', 'companies-delete-file-input'].forEach((id) => {
-    const el = $(id); if (el) el.value = '';
-  });
+  if (clearImportDropzone) clearImportDropzone();
+  if (clearDeleteDropzone) clearDeleteDropzone();
   resetExport();
   ['import-step-map', 'import-step-options', 'import-step-validate', 'import-step-run', 'import-summary-box'].forEach((id) => {
     const el = $(id); if (el) el.classList.add('hidden');
@@ -739,23 +740,17 @@ function initCompaniesModule() {
   });
 
   // ── Import: file upload ──────────────────────────────────
-  const dropzone  = $('dropzone');
-  const fileInput = $('file-input');
-  dropzone.addEventListener('click', () => fileInput.click());
-  dropzone.addEventListener('dragover', (e) => { e.preventDefault(); dropzone.classList.add('dragover'); });
-  dropzone.addEventListener('dragleave', () => dropzone.classList.remove('dragover'));
-  dropzone.addEventListener('drop', (e) => {
-    e.preventDefault();
-    dropzone.classList.remove('dragover');
-    const file = e.dataTransfer.files[0];
-    if (file) loadCSVFile(file);
-  });
-  fileInput.addEventListener('change', () => {
-    if (fileInput.files[0]) loadCSVFile(fileInput.files[0]);
-  });
+  ({ clear: clearImportDropzone } = wireDropzone($('dropzone'), $('file-input'), (file) => loadCSVFile(file), () => {
+    parsedCSV = null;
+    hide('import-step-map');
+    hide('import-step-options');
+    hide('import-step-validate');
+    hide('import-step-run');
+    hide('import-summary-box');
+  }));
   $('btn-reupload').addEventListener('click', () => {
     parsedCSV = null;
-    fileInput.value = '';
+    if (clearImportDropzone) clearImportDropzone();
     hide('import-step-map');
     hide('import-step-options');
     hide('import-step-validate');
@@ -781,7 +776,7 @@ function initCompaniesModule() {
 
   // ── Source migration ──────────────────────────────────────
   $('btn-csm-v1v2-run').addEventListener('click', () => requireToken(startCsmV1V2));
-  $('btn-csm-v1v2-stop').addEventListener('click', () => {
+  $('btn-stop-csm-v1v2').addEventListener('click', () => {
     if (csmV1V2Ctrl) { csmV1V2Ctrl.abort(); csmV1V2Ctrl = null; }
   });
   $('btn-csm-v1v2-again').addEventListener('click', () => {
@@ -790,7 +785,7 @@ function initCompaniesModule() {
     show('csm-v1v2-idle');
   });
   $('btn-csm-v2v1-run').addEventListener('click', () => requireToken(startCsmV2V1));
-  $('btn-csm-v2v1-stop').addEventListener('click', () => {
+  $('btn-stop-csm-v2v1').addEventListener('click', () => {
     if (csmV2V1Ctrl) { csmV2V1Ctrl.abort(); csmV2V1Ctrl = null; }
   });
   $('btn-csm-v2v1-again').addEventListener('click', () => {
@@ -800,24 +795,14 @@ function initCompaniesModule() {
   });
 
   // ── Delete from CSV ───────────────────────────────────────
-  const companiesDeleteDropzone  = $('companies-delete-dropzone');
-  const companiesDeleteFileInput = $('companies-delete-file-input');
-  companiesDeleteDropzone.addEventListener('click', () => companiesDeleteFileInput.click());
-  companiesDeleteDropzone.addEventListener('dragover', (e) => { e.preventDefault(); companiesDeleteDropzone.classList.add('dragover'); });
-  companiesDeleteDropzone.addEventListener('dragleave', () => companiesDeleteDropzone.classList.remove('dragover'));
-  companiesDeleteDropzone.addEventListener('drop', (e) => {
-    e.preventDefault();
-    companiesDeleteDropzone.classList.remove('dragover');
-    const file = e.dataTransfer.files[0];
-    if (file) loadCompaniesDeleteCSV(file);
-  });
-  companiesDeleteFileInput.addEventListener('change', () => {
-    if (companiesDeleteFileInput.files[0]) loadCompaniesDeleteCSV(companiesDeleteFileInput.files[0]);
-  });
+  ({ clear: clearDeleteDropzone } = wireDropzone($('companies-delete-dropzone'), $('companies-delete-file-input'), (file) => loadCompaniesDeleteCSV(file), () => {
+    companiesDeleteParsedCSV = null;
+    hide('companies-delete-csv-step-confirm');
+  }));
   $('companies-delete-uuid-column').addEventListener('change', updateCompaniesDeleteCSVPreview);
   $('btn-companies-delete-reupload').addEventListener('click', () => {
     companiesDeleteParsedCSV = null;
-    companiesDeleteFileInput.value = '';
+    if (clearDeleteDropzone) clearDeleteDropzone();
     hide('companies-delete-csv-step-confirm');
     hide('companies-delete-csv-step-run');
   });
@@ -836,7 +821,7 @@ function initCompaniesModule() {
   });
   $('btn-companies-delete-csv-again').addEventListener('click', () => {
     companiesDeleteParsedCSV = null;
-    companiesDeleteFileInput.value = '';
+    if (clearDeleteDropzone) clearDeleteDropzone();
     hide('companies-delete-csv-step-confirm');
     hide('companies-delete-csv-step-run');
   });

@@ -5,12 +5,15 @@
 // ── Module state ────────────────────────────────────────────
 const NOTES_MAPPING_KEY = 'notes-mapping';
 let notesMappingChangeListenerAdded = false;
+let clearNotesDropzone        = null;
+let clearNotesDeleteDropzone  = null;
+let clearNotesMigrateDropzone = null;
 
 // Called by app.js disconnect handler
 function resetNotesState() {
-  ['notes-file-input', 'notes-delete-file-input', 'notes-migrate-file-input'].forEach((id) => {
-    const el = $(id); if (el) el.value = '';
-  });
+  if (clearNotesDropzone)        clearNotesDropzone();
+  if (clearNotesDeleteDropzone)  clearNotesDeleteDropzone();
+  if (clearNotesMigrateDropzone) clearNotesMigrateDropzone();
   resetNotesExport();
   ['notes-import-step-map', 'notes-import-step-options', 'notes-import-step-validate', 'notes-import-step-run',
    'notes-import-summary-box', 'notes-migrate-done'].forEach((id) => {
@@ -604,7 +607,6 @@ function loadNotesMigrateCSV(file) {
     if (rowCount === 0) { alert('CSV appears empty.'); return; }
     notesMigrateParsedCSV = { raw: text, rowCount };
     show('notes-migrate-form');
-    $('notes-migrate-dropzone').querySelector('.dropzone-label').textContent = `${file.name} (${rowCount} rows)`;
   };
   reader.readAsText(file);
 }
@@ -636,18 +638,13 @@ function initNotesModule() {
   });
 
   // ── Import: file upload ──────────────────────────────────
-  const notesDropzone  = $('notes-dropzone');
-  const notesFileInput = $('notes-file-input');
-  notesDropzone.addEventListener('click', () => notesFileInput.click());
-  notesFileInput.addEventListener('change', (e) => { if (e.target.files[0]) loadNotesCSV(e.target.files[0]); });
-  notesDropzone.addEventListener('dragover', (e) => { e.preventDefault(); notesDropzone.classList.add('drag-over'); });
-  notesDropzone.addEventListener('dragleave', () => notesDropzone.classList.remove('drag-over'));
-  notesDropzone.addEventListener('drop', (e) => {
-    e.preventDefault(); notesDropzone.classList.remove('drag-over');
-    const file = e.dataTransfer.files[0]; if (file) loadNotesCSV(file);
-  });
+  ({ clear: clearNotesDropzone } = wireDropzone($('notes-dropzone'), $('notes-file-input'), (file) => loadNotesCSV(file), () => {
+    notesParsedCSV = null;
+    hide('notes-import-step-map'); hide('notes-import-step-options');
+    hide('notes-import-step-validate'); hide('notes-import-step-run');
+  }));
   $('btn-notes-reupload').addEventListener('click', () => {
-    notesParsedCSV = null; notesFileInput.value = '';
+    notesParsedCSV = null; if (clearNotesDropzone) clearNotesDropzone();
     hide('notes-import-step-map'); hide('notes-import-step-options');
     hide('notes-import-step-validate'); hide('notes-import-step-run');
   });
@@ -701,19 +698,13 @@ function initNotesModule() {
   });
 
   // ── Delete from CSV ───────────────────────────────────────
-  const notesDeleteDropzone  = $('notes-delete-dropzone');
-  const notesDeleteFileInput = $('notes-delete-file-input');
-  notesDeleteDropzone.addEventListener('click', () => notesDeleteFileInput.click());
-  notesDeleteFileInput.addEventListener('change', (e) => { if (e.target.files[0]) loadNotesDeleteCSV(e.target.files[0]); });
-  notesDeleteDropzone.addEventListener('dragover', (e) => { e.preventDefault(); notesDeleteDropzone.classList.add('drag-over'); });
-  notesDeleteDropzone.addEventListener('dragleave', () => notesDeleteDropzone.classList.remove('drag-over'));
-  notesDeleteDropzone.addEventListener('drop', (e) => {
-    e.preventDefault(); notesDeleteDropzone.classList.remove('drag-over');
-    const file = e.dataTransfer.files[0]; if (file) loadNotesDeleteCSV(file);
-  });
+  ({ clear: clearNotesDeleteDropzone } = wireDropzone($('notes-delete-dropzone'), $('notes-delete-file-input'), (file) => loadNotesDeleteCSV(file), () => {
+    notesDeleteParsedCSV = null;
+    hide('notes-delete-csv-step-confirm');
+  }));
   $('notes-delete-uuid-column').addEventListener('change', updateDeleteCSVPreview);
   $('btn-notes-delete-reupload').addEventListener('click', () => {
-    notesDeleteParsedCSV = null; notesDeleteFileInput.value = '';
+    notesDeleteParsedCSV = null; if (clearNotesDeleteDropzone) clearNotesDeleteDropzone();
     hide('notes-delete-csv-step-confirm'); hide('notes-delete-csv-step-run');
   });
   $('btn-notes-delete-csv-run').addEventListener('click', () => requireToken(() => {
@@ -726,7 +717,7 @@ function initNotesModule() {
     hide('btn-stop-notes-delete-csv');
   });
   $('btn-notes-delete-csv-again').addEventListener('click', () => {
-    notesDeleteParsedCSV = null; notesDeleteFileInput.value = '';
+    notesDeleteParsedCSV = null; if (clearNotesDeleteDropzone) clearNotesDeleteDropzone();
     hide('notes-delete-csv-step-confirm'); hide('notes-delete-csv-step-run');
   });
 
@@ -745,16 +736,10 @@ function initNotesModule() {
   });
 
   // ── Migration prep ────────────────────────────────────────
-  const notesMigrateDropzone  = $('notes-migrate-dropzone');
-  const notesMigrateFileInput = $('notes-migrate-file-input');
-  notesMigrateDropzone.addEventListener('click', () => notesMigrateFileInput.click());
-  notesMigrateFileInput.addEventListener('change', (e) => { if (e.target.files[0]) loadNotesMigrateCSV(e.target.files[0]); });
-  notesMigrateDropzone.addEventListener('dragover', (e) => { e.preventDefault(); notesMigrateDropzone.classList.add('drag-over'); });
-  notesMigrateDropzone.addEventListener('dragleave', () => notesMigrateDropzone.classList.remove('drag-over'));
-  notesMigrateDropzone.addEventListener('drop', (e) => {
-    e.preventDefault(); notesMigrateDropzone.classList.remove('drag-over');
-    const file = e.dataTransfer.files[0]; if (file) loadNotesMigrateCSV(file);
-  });
+  ({ clear: clearNotesMigrateDropzone } = wireDropzone($('notes-migrate-dropzone'), $('notes-migrate-file-input'), (file) => loadNotesMigrateCSV(file), () => {
+    notesMigrateParsedCSV = null;
+    hide('notes-migrate-form');
+  }));
   $('btn-notes-migrate-run').addEventListener('click', () => requireToken(async () => {
     if (!notesMigrateParsedCSV) { alert('Upload a CSV first.'); return; }
     const sourceOriginName = $('notes-migrate-source-name').value.trim();
@@ -788,8 +773,8 @@ function initNotesModule() {
     if (notesMigrateResultCSV) triggerDownload(new Blob([notesMigrateResultCSV], { type: 'text/csv;charset=utf-8;' }), notesMigrateFilename);
   });
   $('btn-notes-migrate-again').addEventListener('click', () => {
-    notesMigrateParsedCSV = null; notesMigrateResultCSV = null; notesMigrateFileInput.value = '';
-    notesMigrateDropzone.querySelector('.dropzone-label').textContent = 'Drop your export CSV here';
+    notesMigrateParsedCSV = null; notesMigrateResultCSV = null;
+    if (clearNotesMigrateDropzone) clearNotesMigrateDropzone();
     hide('notes-migrate-form'); hide('notes-migrate-done'); hide('notes-migrate-error'); show('notes-migrate-idle');
   });
   $('btn-notes-migrate-retry').addEventListener('click', () => {

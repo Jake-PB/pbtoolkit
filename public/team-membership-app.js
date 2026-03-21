@@ -25,6 +25,9 @@
   // Log appender (created once, reused across runs within the same session)
   let tmLogAppender  = null;
 
+  // Dropzone clear function (set in initTeamMembershipModule)
+  let tmClearDropzone = null;
+
   // ── Helpers ───────────────────────────────────────────────────────────────
 
   function tm$(id) { return document.getElementById(id); }
@@ -158,9 +161,14 @@
     tm$('tm-export-btn').disabled = true;
   }
 
-  // Called from app.js after token connect — reload if cache wasn't ready yet
+  // Called from app.js after token connect — reload if cache wasn't ready yet.
+  // Guard on the DOM element: if the TM partial hasn't been loaded yet, skip —
+  // initTeamMembershipModule() will call loadTmMetadata() when the user navigates here.
+  // Without this guard, calling loadTmMetadata() before the partial is in the DOM
+  // throws a TypeError on element access, leaving tmCacheLoading stuck at true and
+  // making the refresh button a no-op for the rest of the session.
   function tmReloadIfNeeded() {
-    if (!tmCacheReady && !tmCacheLoading) loadTmMetadata(false);
+    if (!tmCacheReady && !tmCacheLoading && tm$('tm-export-team-filter')) loadTmMetadata(false);
   }
 
   // ── Export tab ────────────────────────────────────────────────────────────
@@ -212,7 +220,7 @@
   function resetImportState() {
     tmCsvBuffer    = null;
     tmCurrentDiffs = null;
-    if (tm$('tm-import-file')) tm$('tm-import-file').value = '';
+    if (tmClearDropzone) tmClearDropzone();
     tmHide('tm-import-format-badge');
     tmHide('tm-import-parse-error');
     tm$('tm-import-preview-btn').disabled = true;
@@ -572,8 +580,16 @@
     tm$('btn-tm-export-again').addEventListener('click', resetExportState);
     tm$('btn-tm-export-retry').addEventListener('click', resetExportState);
 
-    // Import file
-    tm$('tm-import-file').addEventListener('change', (e) => onFileSelected(e.target.files?.[0]));
+    // Import: upload dropzone
+    ({ clear: tmClearDropzone } = wireDropzone(
+      tm$('tm-import-dropzone'),
+      tm$('tm-import-file'),
+      (file) => onFileSelected(file),
+      () => {
+        tmCsvBuffer = null;
+        tm$('tm-import-preview-btn').disabled = true;
+      }
+    ));
 
     // Import preview
     tm$('tm-import-preview-btn').addEventListener('click', () => requireToken(runPreview));

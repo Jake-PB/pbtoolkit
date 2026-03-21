@@ -55,7 +55,18 @@ Tick each box as you verify it. Re-run after any significant change.
 
 ---
 
-## 5. Notes — Export
+## 5. Companies — Source Migration
+
+- [ ] Navigate to Source Migration tab → V1→V2 and V2→V1 panels both visible
+- [ ] Click "Run V1→V2 migration" → progress bar and Stop button appear
+- [ ] Click ⏹ Stop during V1→V2 run → migration halts (regression: stop button was previously wired to wrong ID and did nothing)
+- [ ] Click "Run V2→V1 downcopy" → progress bar and Stop button appear
+- [ ] Click ⏹ Stop during V2→V1 run → migration halts
+- [ ] Navigate away and back → panels reset to idle state
+
+---
+
+## 6. Notes — Export
 
 - [ ] Export notes → CSV downloads with all standard + source columns
 - [ ] Source Origin / Source Record ID columns populated from v1+v2 merged data
@@ -63,7 +74,7 @@ Tick each box as you verify it. Re-run after any significant change.
 
 ---
 
-## 6. Notes — Import
+## 7. Notes — Import
 
 - [ ] Upload CSV and map columns → preview shows row count
 - [ ] Import: CREATE rows (no pb_id) → new notes created
@@ -73,14 +84,14 @@ Tick each box as you verify it. Re-run after any significant change.
 
 ---
 
-## 7. Notes — Delete
+## 8. Notes — Delete
 
 - [ ] Delete by CSV: notes with matching UUIDs are deleted
 - [ ] Delete All: all notes in workspace removed
 
 ---
 
-## 8. Entities — Export
+## 9. Entities — Export
 
 - [ ] Select a single entity type → single CSV downloaded
 - [ ] Completion message uses human label: "Exported N Features. Download started." (not "entities")
@@ -92,7 +103,7 @@ Tick each box as you verify it. Re-run after any significant change.
 
 ---
 
-## 9. Entities — Import
+## 10. Entities — Import
 
 - [ ] Upload CSV files per entity type → tiles show row count and file name
 - [ ] Mapping state persists per entity type across page reloads
@@ -105,7 +116,50 @@ Tick each box as you verify it. Re-run after any significant change.
 
 ---
 
-## 10. Member Activity — Export
+## 11. Team Membership — Export
+
+- [ ] Navigate to Team Membership → teams list loads automatically (no manual refresh needed)
+- [ ] Token added on another module page then navigate to Team Membership → teams load on arrival
+- [ ] Format A export → CSV has `email,name,role` + one column per team with `[uuid]` in header; ✓ for assigned
+- [ ] Format B export → CSV has one column per team, member emails stacked vertically
+- [ ] Filter teams via checkboxes → only selected teams appear in exported CSV
+- [ ] Team search box filters the checkbox list
+- [ ] Select All / Deselect All buttons work
+- [ ] Export completes → download starts, filename includes date and format suffix for Format B
+- [ ] Re-download button after export triggers same file
+
+---
+
+## 12. Team Membership — Import
+
+- [ ] Dropzone shows 📄 icon, "Drop a CSV file here" / "or click to browse" initially
+- [ ] Drop or click-to-browse a CSV → dropzone switches to `has-file` state: filename shown, row count shown, ✕ button appears
+- [ ] Click ✕ on dropzone → file cleared, dropzone returns to default state, Preview button disabled
+- [ ] Drop a replacement file onto the dropzone → new file replaces old one
+- [ ] Preview Changes with Format A CSV → diff panel shows added/removed/unchanged per team
+- [ ] Preview Changes with Format B CSV → correct diff shown
+- [ ] Unresolvable email in CSV → warning shown in diff, not a hard error; import can proceed
+- [ ] Unknown team UUID in CSV header → hard error shown, import blocked
+- [ ] Set mode: member removed from a team not listed in CSV → that team untouched (set mode only affects columns present in CSV)
+- [ ] Confirm import → SSE progress bar advances, live log shows per-operation entries
+- [ ] Already-assigned member (409) → logged as "skipped (already a member)", not counted as error
+- [ ] Not-a-member on remove (404) → logged as "skipped (not a member)", not counted as error
+- [ ] Stop button halts import; partial log remains accessible via "↓ Download log"
+- [ ] Import completes → results summary shows added/removed/skipped counts
+- [ ] Disconnect token → file input clears, dropzone resets, team list cleared
+
+---
+
+## 13. Teams Management — Import / Delete
+
+- [ ] Teams import dropzone shows `has-file` state (filename + row count + ✕) after file selected
+- [ ] Teams delete-by-CSV dropzone shows same `has-file` state
+- [ ] Click ✕ on import dropzone → file clears, mapping panel hides, preview panel hides
+- [ ] Click ✕ on delete-by-CSV dropzone → file clears, confirm/preview panels hide
+
+---
+
+## 14. Member Activity — Export
 
 - [ ] Connect token → metadata loads (roles, teams) without manual refresh
 - [ ] Select date range, roles, teams → export runs
@@ -116,7 +170,23 @@ Tick each box as you verify it. Re-run after any significant change.
 
 ---
 
-## 11. Filename conventions (spot-check across modules)
+## 15. Dropzone UI consistency (spot-check across all modules)
+
+- [ ] Companies import dropzone: `has-file` state shows filename, row count, ✕ button
+- [ ] Companies import: click ✕ → mapping panel (Step 2) hides
+- [ ] Companies delete-by-CSV dropzone: same `has-file` state; click ✕ → Confirm deletion panel hides
+- [ ] Notes import dropzone: same; click ✕ → mapping + options panels hide
+- [ ] Notes delete-by-CSV dropzone: same; click ✕ → confirm step hides
+- [ ] Notes migrate dropzone: same ("Drop your export CSV here" restored on ✕); click ✕ → migrate form hides
+- [ ] Teams Management import dropzone: same; click ✕ → mapping panel hides
+- [ ] Teams Management delete-by-CSV dropzone: same; click ✕ → preview/confirm panels hide
+- [ ] Team Membership import dropzone: same; click ✕ → Preview Changes button re-disables
+- [ ] All dropzones: drag-over shows blue border/background; drop triggers file selection
+- [ ] All dropzones: clicking anywhere except ✕ opens file picker
+
+---
+
+## 16. Filename conventions (spot-check across modules)
 
 | Module | Expected pattern |
 |---|---|
@@ -128,7 +198,7 @@ Tick each box as you verify it. Re-run after any significant change.
 
 ---
 
-## 12. Error & Edge Cases
+## 17. Error & Edge Cases
 
 - [ ] Upload empty CSV → validation message shown (not blank error or crash)
 - [ ] Upload CSV with only a header row → "0 rows" shown cleanly
@@ -138,7 +208,7 @@ Tick each box as you verify it. Re-run after any significant change.
 
 ---
 
-## 13. Security (spot-check)
+## 18. Security (spot-check)
 
 - [ ] Open browser DevTools → no token visible in URL params or response bodies
 - [ ] Inspect response headers → `Content-Security-Policy` and other Helmet headers present
@@ -146,7 +216,7 @@ Tick each box as you verify it. Re-run after any significant change.
 
 ---
 
-## 14. UI Consistency
+## 19. UI Consistency
 
 - [ ] Progress bar styling is consistent across Companies / Notes / Entities / Member Activity
 - [ ] Live log colour coding consistent: green = success, red = error, yellow = warn, grey = info

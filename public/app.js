@@ -548,5 +548,79 @@ function renderImportComplete(el, { created = 0, updated = 0, errors = 0, stoppe
   el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 }
 
+// ── Dropzone helper ──────────────────────────────────────────────────────────
+/**
+ * wireDropzone — attach consistent file-selection UI to a single-file dropzone.
+ * When a file is chosen the dropzone switches to a "has-file" state showing the
+ * filename, row count, and a ✕ remove button — matching the entities tile look.
+ *
+ * @param {HTMLElement}      dropzoneEl  - the .dropzone div
+ * @param {HTMLInputElement} fileInputEl - the hidden <input type="file">
+ * @param {function}         onFile      - called with the File when a file is chosen
+ * @param {function}         [onClear]   - optional callback when the file is cleared
+ * @returns {{ clear: function }}        - call clear() to reset programmatically
+ */
+function wireDropzone(dropzoneEl, fileInputEl, onFile, onClear) {
+  // Capture original label/hint so clear() restores them correctly
+  const origLabel = dropzoneEl.querySelector('.dropzone-label').textContent;
+  const origHint  = dropzoneEl.querySelector('.dropzone-hint').textContent;
+
+  // Inject the ✕ remove button once
+  let removeBtn = dropzoneEl.querySelector('.dropzone-remove');
+  if (!removeBtn) {
+    removeBtn = document.createElement('button');
+    removeBtn.type = 'button';
+    removeBtn.className = 'dropzone-remove hidden';
+    removeBtn.title = 'Remove file';
+    removeBtn.textContent = '✕';
+    dropzoneEl.appendChild(removeBtn);
+  }
+
+  function setSelected(file) {
+    dropzoneEl.classList.add('has-file');
+    dropzoneEl.querySelector('.dropzone-label').textContent = file.name;
+    const hint = dropzoneEl.querySelector('.dropzone-hint');
+    hint.textContent = 'Counting rows…';
+    removeBtn.classList.remove('hidden');
+    file.text().then((text) => {
+      const rows = text.split('\n').filter((l) => l.trim()).length - 1;
+      hint.textContent = `${rows.toLocaleString()} row${rows !== 1 ? 's' : ''}`;
+    }).catch(() => { hint.textContent = ''; });
+  }
+
+  function clear() {
+    dropzoneEl.classList.remove('has-file');
+    dropzoneEl.querySelector('.dropzone-label').textContent = origLabel;
+    dropzoneEl.querySelector('.dropzone-hint').textContent  = origHint;
+    removeBtn.classList.add('hidden');
+    fileInputEl.value = '';
+  }
+
+  removeBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    clear();
+    if (onClear) onClear();
+  });
+
+  dropzoneEl.addEventListener('click', (e) => {
+    if (e.target === removeBtn) return;
+    fileInputEl.click();
+  });
+  dropzoneEl.addEventListener('dragover',  (e) => { e.preventDefault(); dropzoneEl.classList.add('drag-over'); });
+  dropzoneEl.addEventListener('dragleave', () => dropzoneEl.classList.remove('drag-over'));
+  dropzoneEl.addEventListener('drop', (e) => {
+    e.preventDefault();
+    dropzoneEl.classList.remove('drag-over');
+    const file = e.dataTransfer.files[0];
+    if (file) { setSelected(file); onFile(file); }
+  });
+  fileInputEl.addEventListener('change', () => {
+    const file = fileInputEl.files[0];
+    if (file) { setSelected(file); onFile(file); }
+  });
+
+  return { clear };
+}
+
 // ── Run ─────────────────────────────────────────────────────
 boot();

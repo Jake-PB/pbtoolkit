@@ -97,6 +97,17 @@
               <!-- ── IDLE STATE ── -->
               <div id="tm-import-idle">
 
+                <!-- File upload -->
+                <div class="form-row" style="margin-bottom:16px;">
+                  <div class="dropzone" id="tm-import-dropzone">
+                    <span class="dropzone-icon">📄</span>
+                    <div class="dropzone-label">Drop a CSV file here</div>
+                    <div class="dropzone-hint">or click to browse</div>
+                  </div>
+                  <input type="file" id="tm-import-file" accept=".csv,text/csv" class="hidden" />
+                  <div id="tm-import-format-badge" class="hidden" style="margin-top:6px;font-size:12px;color:var(--c-muted);"></div>
+                </div>
+
                 <!-- Mode selector -->
                 <div class="form-row" style="margin-bottom:16px;">
                   <label class="form-label">Import mode</label>
@@ -117,13 +128,6 @@
                       <span class="info-icon" data-tip="Removes the team assignments listed in your CSV. Only deletes — nothing will be added. Members not currently assigned to a listed team are skipped.">i</span>
                     </label>
                   </div>
-                </div>
-
-                <!-- File upload -->
-                <div class="form-row" style="margin-bottom:16px;">
-                  <label class="form-label" for="tm-import-file">CSV file</label>
-                  <input type="file" id="tm-import-file" accept=".csv" class="form-input" />
-                  <div id="tm-import-format-badge" class="hidden" style="margin-top:6px;font-size:12px;color:var(--c-muted);"></div>
                 </div>
 
                 <!-- Hard errors (block import) -->

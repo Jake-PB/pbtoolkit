@@ -32,6 +32,10 @@
   let tcImportLogAppender    = null;
   let tcDeleteCsvLogAppender = null;
 
+  // Dropzone clear functions (set in initTeamsCrudModule)
+  let tcClearImportDropzone = null;
+  let tcClearDeleteDropzone = null;
+
   // ── Scope helpers ────────────────────────────────────────────────────────────
 
   function tc$(id)            { return document.getElementById(id); }
@@ -388,8 +392,7 @@
   function resetTcImport() {
     tcImportParsedCSV = null;
     tcCurrentDiff     = null;
-    const fi = tc$('tc-import-file-input');
-    if (fi) fi.value = '';
+    if (tcClearImportDropzone) tcClearImportDropzone();
     tcHide('tc-import-step-map');
     tcHide('tc-import-step-preview');
     tcHide('tc-import-step-run');
@@ -620,8 +623,7 @@
 
   function resetTcDeleteCsv() {
     tcDeleteCsvParsed = null;
-    const fi = tc$('tc-delete-csv-file-input');
-    if (fi) fi.value = '';
+    if (tcClearDeleteDropzone) tcClearDeleteDropzone();
     tcHide('tc-delete-csv-step-confirm');
     tcHide('tc-delete-csv-step-preview');
     tcHide('tc-delete-csv-step-run');
@@ -716,10 +718,8 @@
     tcDeleteCsvParsed = null;
     tcExportBlob      = null;
 
-    const fi1 = tc$('tc-import-file-input');
-    const fi2 = tc$('tc-delete-csv-file-input');
-    if (fi1) fi1.value = '';
-    if (fi2) fi2.value = '';
+    if (tcClearImportDropzone) tcClearImportDropzone();
+    if (tcClearDeleteDropzone) tcClearDeleteDropzone();
 
     // Reset export
     tcHide('tc-export-done');
@@ -771,21 +771,11 @@
     });
 
     // ── Import: upload dropzone ──────────────────────────────────────────────
-    const importDropzone  = tc$('tc-import-dropzone');
-    const importFileInput = tc$('tc-import-file-input');
-
-    importDropzone.addEventListener('click', () => importFileInput.click());
-    importDropzone.addEventListener('dragover',  (e) => { e.preventDefault(); importDropzone.classList.add('dragover'); });
-    importDropzone.addEventListener('dragleave', () => importDropzone.classList.remove('dragover'));
-    importDropzone.addEventListener('drop', (e) => {
-      e.preventDefault();
-      importDropzone.classList.remove('dragover');
-      const file = e.dataTransfer.files[0];
-      if (file) loadTcImportCSV(file);
-    });
-    importFileInput.addEventListener('change', () => {
-      if (importFileInput.files[0]) loadTcImportCSV(importFileInput.files[0]);
-    });
+    ({ clear: tcClearImportDropzone } = wireDropzone(tc$('tc-import-dropzone'), tc$('tc-import-file-input'), (file) => loadTcImportCSV(file), () => {
+      tcImportParsedCSV = null;
+      tcHide('tc-import-step-map');
+      tcHide('tc-import-step-preview');
+    }));
 
     // ── Import: re-upload ────────────────────────────────────────────────────
     tc$('btn-tc-import-reupload').addEventListener('click', () => {
@@ -829,21 +819,11 @@
     });
 
     // ── Delete by CSV: upload dropzone ──────────────────────────────────────
-    const deleteCsvDropzone  = tc$('tc-delete-csv-dropzone');
-    const deleteCsvFileInput = tc$('tc-delete-csv-file-input');
-
-    deleteCsvDropzone.addEventListener('click', () => deleteCsvFileInput.click());
-    deleteCsvDropzone.addEventListener('dragover',  (e) => { e.preventDefault(); deleteCsvDropzone.classList.add('dragover'); });
-    deleteCsvDropzone.addEventListener('dragleave', () => deleteCsvDropzone.classList.remove('dragover'));
-    deleteCsvDropzone.addEventListener('drop', (e) => {
-      e.preventDefault();
-      deleteCsvDropzone.classList.remove('dragover');
-      const file = e.dataTransfer.files[0];
-      if (file) loadTcDeleteCsv(file);
-    });
-    deleteCsvFileInput.addEventListener('change', () => {
-      if (deleteCsvFileInput.files[0]) loadTcDeleteCsv(deleteCsvFileInput.files[0]);
-    });
+    ({ clear: tcClearDeleteDropzone } = wireDropzone(tc$('tc-delete-csv-dropzone'), tc$('tc-delete-csv-file-input'), (file) => loadTcDeleteCsv(file), () => {
+      tcDeleteCsvParsed = null;
+      tcHide('tc-delete-csv-step-confirm');
+      tcHide('tc-delete-csv-step-preview');
+    }));
 
     // ── Delete by CSV: column pickers → update preview ───────────────────────
     tc$('tc-delete-csv-id-col').addEventListener('change',     updateTcDeleteCsvPreview);
