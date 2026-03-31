@@ -9,6 +9,7 @@
 const sanitizeHtml = require('sanitize-html');
 const { cell } = require('./csvParser');
 const { SINGULAR_TEAM_TYPES, HAS_TIMEFRAME, HEALTH_TYPES } = require('./meta');
+const { normalizeSchema } = require('./configCache');
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const EMAIL_RE = /<?([A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,})>?/i;
@@ -390,7 +391,7 @@ function normalizeCustomValue(val, typeToken, schema) {
   if (val === '' || val == null) return null;
   const s = String(val).trim();
 
-  if (tt.includes('richtext') || String(schema).includes('RichText')) {
+  if (tt.includes('richtext') || normalizeSchema(schema).includes('RichText')) {
     return sanitizeDescription(s);
   }
   if (tt === 'singleselect') return { name: s };
@@ -433,7 +434,7 @@ function sanitizeDescription(html) {
 // ---------------------------------------------------------------------------
 
 function schemaToToken(schema) {
-  const s = String(schema || '').toLowerCase();
+  const s = normalizeSchema(schema).toLowerCase();
   if (s.includes('richtext'))    return 'richtext';
   if (s.includes('singleselect') || s.includes('status')) return 'singleselect';
   if (s.includes('multiselect')) return 'multiselect';

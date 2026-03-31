@@ -43,6 +43,7 @@ const { startSSE } = require('../lib/sse');
 const { parseApiError } = require('../lib/errorUtils');
 const { UUID_RE } = require('../lib/constants');
 const { pbAuth } = require('../middleware/pbAuth');
+const { normalizeSchema } = require('../services/entities/configCache');
 
 const router = express.Router();
 
@@ -398,7 +399,7 @@ async function findMigrationFieldId(pbFetch, withRetry, fieldName) {
       'fetch entity config'
     );
     const fields = Object.values((r?.data?.fields) || {});
-    const f = fields.find((f) => f.name === fieldName && f.schema === 'TextFieldValue');
+    const f = fields.find((f) => f.name === fieldName && normalizeSchema(f.schema) === 'TextFieldValue');
     return f ? f.id : null;
   } catch (_) {
     return null;
