@@ -18,7 +18,7 @@ const { pbAuth } = require('../middleware/pbAuth');
 const { sanitizeDescription } = require('../services/entities/fieldBuilder');
 const { formatFieldValue } = require('../services/entities/exporter');
 const { fetchAllEntitiesPost } = require('../lib/pbClient');
-const { schemaToType, EXCLUDED_FIELD_IDS, STANDARD_FIELD_IDS } = require('../services/entities/configCache');
+const { schemaToType, normalizeSchema, EXCLUDED_FIELD_IDS, STANDARD_FIELD_IDS } = require('../services/entities/configCache');
 
 /**
  * Parse a company configuration response into a customFields array,
@@ -30,12 +30,15 @@ function parseCompanyConfig(configData) {
   const entry = configData || {};
   const customFields = Object.entries(entry.fields || {})
     .filter(([id]) => !id.includes('.') && !EXCLUDED_FIELD_IDS.has(id) && !STANDARD_FIELD_IDS.has(id))
-    .map(([id, f]) => ({
-      id,
-      name:        f.name || id,
-      schema:      f.schema || '',
-      displayType: schemaToType(f.schema || ''),
-    }));
+    .map(([id, f]) => {
+      const schema = normalizeSchema(f.schema);
+      return {
+        id,
+        name:        f.name || id,
+        schema,
+        displayType: schemaToType(schema),
+      };
+    });
   return { customFields };
 }
 

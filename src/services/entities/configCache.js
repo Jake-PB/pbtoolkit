@@ -46,11 +46,35 @@ const STANDARD_FIELD_IDS = new Set([
 ]);
 
 /**
+ * Normalize a schema value from the PB config API to a canonical entity-style string.
+ *
+ * The v2 configurations endpoint now returns JSON Schema objects for some entity types
+ * (e.g. { "type": "string" }) instead of the legacy string format ("TextFieldValue").
+ * This function converts both formats to the legacy string so downstream code
+ * (formatFieldValue, schemaToToken, etc.) can rely on a single format.
+ */
+function normalizeSchema(schema) {
+  if (!schema) return '';
+  if (typeof schema === 'string') return schema;
+  if (typeof schema !== 'object') return '';
+  if (schema.type === 'number')  return 'NumberFieldValue';
+  if (schema.type === 'string' && schema.format === 'date') return 'DateFieldValue';
+  if (schema.type === 'string' && (schema.format === 'richtext' || schema.contentMediaType)) return 'RichTextFieldValue';
+  if (schema.type === 'string')  return 'TextFieldValue';
+  if (schema.type === 'boolean') return 'BooleanFieldValue';
+  if (schema.type === 'array')   return 'MultiSelectFieldValue';
+  if (schema.type === 'object' && schema.properties?.email) return 'MemberFieldValue';
+  if (schema.type === 'object')  return 'SingleSelectFieldValue';
+  return '';
+}
+
+/**
  * Strip "FieldValue" suffix from a schema name for clean display in headers.
  * e.g. "NumberFieldValue" → "Number", "SingleSelectFieldValue" → "SingleSelect"
  */
 function schemaToType(schema) {
-  return schema ? schema.replace('FieldValue', '') : 'Unknown';
+  const s = normalizeSchema(schema);
+  return s ? s.replace('FieldValue', '') : 'Unknown';
 }
 
 /**
@@ -80,12 +104,15 @@ async function fetchEntityConfigs(pbFetch, withRetry) {
       // then strip sub-field paths (id contains '.') and excluded composites
       const eligible = Object.values(entry.fields || {})
         .filter((f) => !f.id.includes('.') && !EXCLUDED_FIELD_IDS.has(f.id))
-        .map((f) => ({
-          id:          f.id,
-          name:        f.name,
-          schema:      f.schema,
-          displayType: schemaToType(f.schema),
-        }));
+        .map((f) => {
+          const schema = normalizeSchema(f.schema);
+          return {
+            id:          f.id,
+            name:        f.name,
+            schema,
+            displayType: schemaToType(schema),
+          };
+        });
 
       configs[entry.type] = {
         type:         entry.type,
@@ -100,4 +127,4 @@ async function fetchEntityConfigs(pbFetch, withRetry) {
   return configs;
 }
 
-module.exports = { fetchEntityConfigs, EXCLUDED_FIELD_IDS, STANDARD_FIELD_IDS, schemaToType };
+module.exports = { fetchEntityConfigs, EXCLUDED_FIELD_IDS, STANDARD_FIELD_IDS, schemaToType, normalizeSchema };
