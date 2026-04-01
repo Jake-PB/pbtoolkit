@@ -17,6 +17,7 @@ const teamMembershipRouter = require('./routes/teamMembership');
 const teamsCrudRouter      = require('./routes/teamsCrud');
 const membersTeamsMgmtRouter = require('./routes/membersTeamsMgmt');
 const authRouter           = require('./routes/auth');
+const feedbackRouter       = require('./routes/feedback');
 
 const shouldCompress = (req, res) => {
   if (req.headers.accept && req.headers.accept.includes('text/event-stream')) {
@@ -66,8 +67,9 @@ app.get('/api/auth/status', (req, res) => {
 app.use('/auth', authRouter);
 app.get('/api/config', (_req, res) => {
   res.json({
-    feedbackUrl: process.env.FEEDBACK_URL || null,
-    issueUrl:    process.env.ISSUE_URL    || null,
+    feedbackUrl:        process.env.FEEDBACK_URL || null,
+    issueUrl:           process.env.ISSUE_URL    || null,
+    feedbackFormEnabled: !!(process.env.PB_FEEDBACK_TOKEN || (process.env.BREVO_API_KEY && process.env.BREVO_SENDER_EMAIL && process.env.FEEDBACK_RECIPIENT_EMAIL)),
   });
 });
 
@@ -110,6 +112,12 @@ app.use('/api/member-activity', memberActivityRouter);
 app.use('/api/team-membership', teamMembershipRouter);
 app.use('/api/teams-crud', teamsCrudRouter);
 app.use('/api/members-teams-mgmt', membersTeamsMgmtRouter);
+app.use('/api/feedback', feedbackRouter);
+
+// Static pages
+app.get('/privacy', (_req, res) => {
+  res.sendFile(path.join(__dirname, '..', 'public', 'privacy.html'));
+});
 
 // Fallback to index.html for client-side routing
 app.get('*', (req, res) => {
