@@ -191,9 +191,10 @@ function buildNoteRow(note, userCache, companyCache, sourceMap) {
     .map((r) => r.target.id)
     .join(',');
 
-  // Source: use v2 data, fill gaps from v1 map
-  let sourceOrigin = f.source?.origin || '';
-  let sourceRecordId = f.source?.id || f.source?.recordId || '';
+  // Source: prefer metadata.source (new v2), fall back to fields.source (deprecated), then v1 map
+  const metaSrc = note.metadata?.source || {};
+  let sourceOrigin = metaSrc.system || f.source?.origin || '';
+  let sourceRecordId = metaSrc.recordId || f.source?.id || f.source?.recordId || '';
   if (!sourceOrigin && sourceMap) {
     const v1 = sourceMap.get(note.id);
     if (v1) {
@@ -211,7 +212,7 @@ function buildNoteRow(note, userCache, companyCache, sourceMap) {
 
   return {
     pb_id: note.id || '',
-    type: note.type || 'simple',
+    type: note.type || 'textNote',
     title: f.name || '',
     content,
     display_url: f.displayUrl || f.display_url || '',
