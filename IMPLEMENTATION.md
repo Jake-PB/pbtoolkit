@@ -436,6 +436,36 @@ Utility classes: `.hidden`, `.mt-{4|8|12|16|20}`, `.mb-16`, `.flex`, `.gap-8`, `
 
 Component classes: `.panel`, `.panel-header`, `.panel-title`, `.panel-subtitle`, `.panel-body`, `.panel-divider`, `.btn`, `.btn-primary`, `.btn-secondary`, `.btn-danger`, `.btn-ghost`, `.btn-sm`, `.btn-full`, `.badge`, `.alert`, `.alert-ok/.warn/.danger/.info`, `.progress-wrap`, `.progress-bar`, `.dropzone`, `.mapping-table`, `.live-log`, `.log-entry`
 
+### Sidebar navigation components
+
+| Class | Use |
+|---|---|
+| `.nav-section-label` | Top-level sidebar heading (e.g. "TOOLS"). Uppercase, subtle colour, bottom border separator. One per module sidebar. |
+| `.nav-group-label` | Subsection chip within a module sidebar (e.g. "Live Editor", "Team Management"). Full-width rounded rectangle with `--c-border` background, green (`--c-brand`) uppercase text. Use to visually group related nav items when a module has multiple subsections. First child has reduced top margin via `:first-child`. |
+| `.nav-item` | Sidebar navigation button. Active state uses `--c-brand-light` background with a green left inset bar (`box-shadow: inset 3px 0 0 var(--c-brand)`). |
+
+**Adding subsections to a new module:** in `index.html`, wrap the module's sidebar `<div>` contents with `<span class="nav-group-label">Section Name</span>` before each group of `.nav-item` buttons. See `#sidebar-teams` for a three-section example (Live Editor / Team Management / Team Membership). The responsive breakpoint in `style.css` hides `.nav-group-label` on narrow viewports.
+
+### Shared JS helpers (app.js)
+
+These global helpers are available to all module scripts and should be preferred over inline equivalents.
+
+| Helper | Signature | Use |
+|---|---|---|
+| `setProgress` | `setProgress(prefix, msg, pct)` | Update a progress bar + label. Expects ids `${prefix}-progress-bar`, `${prefix}-progress-msg`, and optionally `${prefix}-progress-pct`. |
+| `showAlert` | `showAlert(msg, opts?) → Promise` | Non-blocking styled alert dialog. Resolves when dismissed. `opts.icon` sets the left icon (default `'ℹ️'`). |
+| `showConfirm` | `showConfirm(msg, opts?) → Promise<boolean>` | Styled confirm dialog. Resolves `true` (OK) or `false` (Cancel). `opts.okLabel`, `opts.cancelLabel`, `opts.icon`. |
+| `createViewState` | `createViewState(prefix, states) → { go, reset, current }` | Manages mutually exclusive visibility states. Each state maps to id `${prefix}-${state}`. `go(state)` shows one and hides all others. `reset()` returns to the first state. |
+
+**Migration note:** prefer `showAlert()`/`showConfirm()` over native `alert()`/`confirm()` in new code. The shared dialog modal lives in `index.html` (`#app-dialog`).
+
+### DOM building convention
+
+- **Default: `innerHTML` + `esc()`** — use template literals with `esc()` for static display markup. This is compact and mirrors the HTML structure.
+- **Exception: `createElement`** — use when the element needs immediate event listeners during construction (e.g. draggable rows, inline-edit fields).
+- **Rule of thumb:** if the element needs JS wired to it at creation → `createElement`. If it's display-only → `innerHTML` + `esc()`.
+- **Never** interpolate user data into `innerHTML` without `esc()`.
+
 ---
 
 ## Entities module
