@@ -14,15 +14,117 @@ async function loadAppConfig() {
       fbBtn.rel              = 'noopener';
       fbBtn.style.display    = 'inline-flex';
     }
-    if (cfg.issueUrl) {
-      issueBtn.href          = cfg.issueUrl;
+    // Report Issue: modal if feedback service is configured, else fall back to ISSUE_URL
+    if (cfg.feedbackFormEnabled || cfg.issueUrl) {
       issueBtn.style.display = 'inline-flex';
+      issueBtn.addEventListener('click', () => {
+        if (cfg.feedbackFormEnabled) openReportIssueModal();
+        else window.open(cfg.issueUrl, '_blank', 'noopener');
+      });
     }
   } catch (_) {
     // leave both hidden
   }
 }
 loadAppConfig();
+
+// ── Report Issue modal ────────────────────────────────────
+function openReportIssueModal() {
+  const overlay  = document.getElementById('ri-overlay');
+  const form     = document.getElementById('ri-form');
+  const select   = document.getElementById('ri-module');
+  const status   = document.getElementById('ri-status');
+
+  // Populate module dropdown dynamically from active tool cards
+  if (select.options.length <= 1) {
+    const modules = [];
+    document.querySelectorAll('.tool-card:not(.tool-card-soon) .tool-card-name').forEach(el => {
+      modules.push(el.textContent.trim());
+    });
+    ['Authentication', 'General Issue'].forEach(name => modules.push(name));
+    modules.forEach(name => {
+      const opt = document.createElement('option');
+      opt.value = name;
+      opt.textContent = name;
+      select.appendChild(opt);
+    });
+  }
+
+  // Reset form state
+  form.reset();
+  status.textContent = '';
+  status.className = 'ri-status';
+  document.getElementById('ri-submit').disabled = false;
+
+  overlay.classList.remove('hidden');
+
+  // Focus first field
+  document.getElementById('ri-email').focus();
+}
+
+function closeReportIssueModal() {
+  document.getElementById('ri-overlay').classList.add('hidden');
+}
+
+// Wire close/cancel/overlay-click
+document.addEventListener('DOMContentLoaded', () => {
+  const overlay = document.getElementById('ri-overlay');
+  if (!overlay) return;
+
+  document.getElementById('ri-close').addEventListener('click', closeReportIssueModal);
+  document.getElementById('ri-cancel').addEventListener('click', closeReportIssueModal);
+  overlay.addEventListener('click', (e) => {
+    if (e.target === overlay) closeReportIssueModal();
+  });
+
+  // Escape key
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && !overlay.classList.contains('hidden')) closeReportIssueModal();
+  });
+
+  // Form submission
+  document.getElementById('ri-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const status  = document.getElementById('ri-status');
+    const submitBtn = document.getElementById('ri-submit');
+
+    // Consent check
+    if (!document.getElementById('ri-consent').checked) {
+      status.textContent = 'Please agree to the Privacy Policy.';
+      status.className = 'ri-status ri-status--error';
+      return;
+    }
+
+    submitBtn.disabled = true;
+    status.textContent = 'Sending...';
+    status.className = 'ri-status';
+
+    const payload = {
+      email:            document.getElementById('ri-email').value.trim() || undefined,
+      module:           document.getElementById('ri-module').value,
+      description:      document.getElementById('ri-description').value.trim(),
+      expectedBehavior: document.getElementById('ri-expected').value.trim(),
+      stepsToReproduce: document.getElementById('ri-steps').value.trim() || undefined,
+    };
+
+    try {
+      const res = await fetch('/api/feedback', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to send report.');
+      status.textContent = 'Report sent — thank you!';
+      status.className = 'ri-status ri-status--ok';
+      setTimeout(closeReportIssueModal, 2000);
+    } catch (err) {
+      status.textContent = err.message;
+      status.className = 'ri-status ri-status--error';
+      submitBtn.disabled = false;
+    }
+  });
+});
 
 // ── Session state ──────────────────────────────────────────
 const SESSION_KEY = 'pb_token';

@@ -24,7 +24,12 @@ Copy `.env.example` to `.env` and fill in values as needed:
 |---|---|---|
 | `PORT` | `8080` | Port the server listens on |
 | `FEEDBACK_URL` | — | URL opened by the "Share feedback" button (hidden if unset) |
-| `ISSUE_URL` | — | URL opened by the "Report issue" button (hidden if unset) |
+| `ISSUE_URL` | — | Fallback URL for "Report issue" button when feedback form is not configured (hidden if unset) |
+| `PB_FEEDBACK_TOKEN` | — | Dedicated PB API token for the app creator's workspace — bug reports are created as notes here |
+| `PB_FEEDBACK_EU` | `false` | Set to `true` if the feedback PB workspace is in the EU region |
+| `BREVO_API_KEY` | — | Brevo transactional email API key (fallback if `PB_FEEDBACK_TOKEN` is not set) |
+| `BREVO_SENDER_EMAIL` | — | Verified sender email in Brevo |
+| `FEEDBACK_RECIPIENT_EMAIL` | — | Email address where fallback reports are sent |
 | `SESSION_SECRET` | `dev-secret-change-in-production` | Secret used to sign the session cookie. **Must be set in production.** |
 | `PB_OAUTH_CLIENT_ID` | — | Productboard OAuth application client ID (required for OAuth) |
 | `PB_OAUTH_CLIENT_SECRET` | — | Productboard OAuth application client secret (required for OAuth) |
@@ -96,8 +101,8 @@ Fetches all companies and generates a downloadable CSV.
 | Description | `company.description` |
 | Source Origin *(v1 — deprecated)* | `company.sourceOrigin` (v1 API) |
 | Source Record ID *(v1 — deprecated)* | `company.sourceRecordId` (v1 API) |
-| External System Name *(v2)* | `metadata.source.externalSystemName` |
-| External Record ID *(v2)* | `metadata.source.externalRecordId` |
+| Source System *(v2)* | `metadata.source.system` |
+| Source Record ID *(v2)* | `metadata.source.recordId` |
 | *(one column per custom field)* | `entity.fields` |
 
 Custom field values are fetched in parallel batches of 5. Progress is streamed in real time. Output filename: `companies-YYYY-MM-DD.csv`.
@@ -126,7 +131,7 @@ Supported HTML tags in Description: `h1 h2 p b i u s code pre ul ol li a hr bloc
 - No UUID, domain exists → PATCH matched company
 - No UUID, domain is new → POST (create)
 
-Standard and custom fields are written in a single v2 API call per row. Source fields (`Source Origin`, `Source Record ID`) map to `metadata.source.externalSystemName` and `metadata.source.externalRecordId` in the v2 API.
+Standard and custom fields are written in a single v2 API call per row. Source fields (`Source Origin`, `Source Record ID`) map to `metadata.source.system` and `metadata.source.recordId` in the v2 API.
 
 A **Stop** button is available during import. The summary shows rows processed, created, updated, and error count.
 
@@ -316,6 +321,19 @@ All Productboard API calls go through a shared client that:
 
 ### Feedback widget
 
-A fixed bottom-right widget with two buttons — **Share feedback** and **Report issue**. URLs are configured via the `FEEDBACK_URL` and `ISSUE_URL` environment variables. Each button is hidden automatically if its corresponding variable is not set, so the widget only appears when at least one URL is configured.
+A fixed bottom-left widget with two buttons — **Share feedback** and **Report issue**.
 
-On page load, the frontend calls `GET /api/config` to retrieve the URLs from the server and applies them to the anchor elements at runtime — no rebuild required when changing URLs.
+- **Share feedback** — opens the URL configured via `FEEDBACK_URL` (hidden if unset).
+- **Report issue** — opens an in-app bug report form if `PB_FEEDBACK_TOKEN` or Brevo is configured. Falls back to opening `ISSUE_URL` in a new tab. Hidden if none are configured.
+
+The report form collects: module (dropdown), issue description, expected behavior, steps to reproduce (optional), and email (optional). A GDPR consent checkbox links to `/privacy`.
+
+**How reports are routed:**
+
+| Priority | Condition | Behavior |
+|---|---|---|
+| 1 | `PB_FEEDBACK_TOKEN` is set | Creates a note in the app creator's Productboard workspace with `🐞 Bug report` and module tags. If email is provided, it's set as the note's user for customer matching. |
+| 2 | Brevo env vars are set | Sends an HTML email to `FEEDBACK_RECIPIENT_EMAIL` via Brevo. |
+| 3 | `ISSUE_URL` is set | Button opens the URL directly (no form). |
+
+On page load, the frontend calls `GET /api/config` to check which services are available and configures the button behavior accordingly.
