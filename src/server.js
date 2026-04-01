@@ -67,6 +67,7 @@ app.get('/api/auth/status', (req, res) => {
 app.use('/auth', authRouter);
 app.get('/api/config', (_req, res) => {
   res.json({
+    version:            process.env.npm_package_version || require(path.join(__dirname, '..', 'package.json')).version,
     feedbackUrl:        process.env.FEEDBACK_URL || null,
     issueUrl:           process.env.ISSUE_URL    || null,
     feedbackFormEnabled: !!(process.env.PB_FEEDBACK_TOKEN || (process.env.BREVO_API_KEY && process.env.BREVO_SENDER_EMAIL && process.env.FEEDBACK_RECIPIENT_EMAIL)),
