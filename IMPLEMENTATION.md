@@ -596,7 +596,7 @@ pb-member-activity_2026-03-01_2026-03-14_role-maker_team-frontend.csv
 
 - **V1 and v2 company lists are separate** — `GET /companies` (v1) only returns companies that were originally created via v1. Companies created via `POST /v2/entities` (including all PBToolkit-imported companies) do not appear in v1 and can only be retrieved via `GET /v2/entities?type[]=company`.
 
-- **Source fields are v2 `metadata.source`** — `sourceOriginCol` maps to `metadata.source.externalSystemName` and `sourceRecordCol` to `metadata.source.externalRecordId`. The v1 `source.origin`/`source.record_id` fields are separate and are not written by the import. Export includes both v1 and v2 source columns (v1 columns are marked as deprecated in the CSV header).
+- **Source fields are v2 `metadata.source`** — `sourceOriginCol` maps to `metadata.source.system` and `sourceRecordCol` to `metadata.source.recordId`. The v1 `source.origin`/`source.record_id` fields are separate and are not written by the import. Export includes both v1 and v2 source columns (v1 columns are marked as deprecated in the CSV header).
 
 - **`parseCSVHeaders` in `app.js` is a naive implementation** — it splits on `,` and strips quotes. It is only used to populate the mapping dropdowns; the actual parsing for import uses `papaparse` on the server. If headers contain quoted commas, the frontend display may be slightly off but the import will still be correct.
 
@@ -628,7 +628,7 @@ All companies logic lives in **one unified route file** (`src/routes/companies.j
 2. **domain match found** → same `PATCH /v2/entities/{id}` by UUID from domain cache
 3. **neither** → `POST /v2/entities` — all fields (name, domain, description, custom fields) inline in the request body + `metadata.source`
 
-Custom fields and standard fields are included in the same v2 create/patch call — no separate per-field calls. Source fields (`sourceOriginCol` → `metadata.source.externalSystemName`, `sourceRecordCol` → `metadata.source.externalRecordId`) are written via v2 metadata at creation/update time.
+Custom fields and standard fields are included in the same v2 create/patch call — no separate per-field calls. Source fields (`sourceOriginCol` → `metadata.source.system`, `sourceRecordCol` → `metadata.source.recordId`) are written via v2 metadata at creation/update time.
 
 ### Domain cache (`buildDomainCache`)
 
