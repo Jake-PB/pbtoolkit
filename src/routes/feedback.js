@@ -25,6 +25,7 @@ router.post('/', async (req, res) => {
   }
 
   const safeEmail = email ? email.replace(/[\r\n]/g, '').trim() : null;
+  const issueUrl = process.env.ISSUE_URL ? String(process.env.ISSUE_URL).trim() : null;
 
   // ── Try Productboard note first (dedicated app-creator token) ──
   const pbToken = process.env.PB_FEEDBACK_TOKEN;
@@ -72,6 +73,18 @@ router.post('/', async (req, res) => {
       return res.json({ ok: true, method: 'productboard' });
     } catch (err) {
       console.error('PB note creation failed:', parseApiError(err));
+      const hasBrevoFallback = !!(process.env.BREVO_API_KEY && process.env.BREVO_SENDER_EMAIL && process.env.FEEDBACK_RECIPIENT_EMAIL);
+      if (!hasBrevoFallback) {
+        if (issueUrl) {
+          return res.status(503).json({
+            error: 'Automatic report submission is temporarily unavailable. Please submit your issue using the fallback link.',
+            fallbackUrl: issueUrl,
+          });
+        }
+        return res.status(503).json({
+          error: 'Automatic report submission is temporarily unavailable. Please try again later.',
+        });
+      }
       // Fall through to Brevo
     }
   }

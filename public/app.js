@@ -15,19 +15,36 @@ async function loadAppConfig() {
       fbBtn.rel              = 'noopener';
       fbBtn.style.display    = 'inline-flex';
     }
-    // Report Issue: modal if feedback service is configured, else fall back to ISSUE_URL
-    if (cfg.feedbackFormEnabled || cfg.issueUrl) {
+    // Report Issue: modal if feedback service is configured, else fall back to ISSUE_URL.
+    const issueUrl = normalizeExternalUrl(cfg.issueUrl);
+    if (cfg.feedbackFormEnabled || issueUrl) {
       issueBtn.style.display = 'inline-flex';
       issueBtn.addEventListener('click', () => {
         if (cfg.feedbackFormEnabled) openReportIssueModal();
-        else window.open(cfg.issueUrl, '_blank', 'noopener');
+        else window.location.assign(issueUrl);
       });
     }
-  } catch (_) {
-    // leave both hidden
+  } catch (err) {
+    console.warn('[loadAppConfig] failed:', err);
   }
 }
 loadAppConfig();
+
+function normalizeExternalUrl(url) {
+  if (!url) return null;
+  const raw = String(url).trim();
+  if (!raw) return null;
+  if (raw.startsWith('/')) return raw;
+  if (/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(raw)) return raw;
+  if (/^[^/]+\.[^/]+/.test(raw)) return `https://${raw}`;
+  return raw;
+}
+
+function setReportIssueStatus(statusEl, message, { isError = false, html = false } = {}) {
+  if (html) statusEl.innerHTML = message;
+  else statusEl.textContent = message;
+  statusEl.className = `ri-status${isError ? ' ri-status--error' : ''}`;
+}
 
 // ── Report Issue modal ────────────────────────────────────
 function openReportIssueModal() {
@@ -91,14 +108,12 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Consent check
     if (!document.getElementById('ri-consent').checked) {
-      status.textContent = 'Please agree to the Privacy Policy.';
-      status.className = 'ri-status ri-status--error';
+      setReportIssueStatus(status, 'Please agree to the Privacy Policy.', { isError: true });
       return;
     }
 
     submitBtn.disabled = true;
-    status.textContent = 'Sending...';
-    status.className = 'ri-status';
+    setReportIssueStatus(status, 'Sending...');
 
     const payload = {
       email:            document.getElementById('ri-email').value.trim() || undefined,
@@ -115,13 +130,24 @@ document.addEventListener('DOMContentLoaded', () => {
         body: JSON.stringify(payload),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Failed to send report.');
-      status.textContent = 'Report sent — thank you!';
-      status.className = 'ri-status ri-status--ok';
+      if (!res.ok) {
+        const fallbackUrl = normalizeExternalUrl(data.fallbackUrl);
+        if (fallbackUrl) {
+          setReportIssueStatus(
+            status,
+            `Automatic report submission is unavailable right now. Please <a href="${esc(fallbackUrl)}" target="_blank" rel="noopener">submit the issue here</a>.`,
+            { isError: true, html: true }
+          );
+          submitBtn.disabled = false;
+          return;
+        }
+        throw new Error(data.error || 'Failed to send report.');
+      }
+      setReportIssueStatus(status, 'Report sent — thank you!');
+      status.classList.add('ri-status--ok');
       setTimeout(closeReportIssueModal, 2000);
     } catch (err) {
-      status.textContent = err.message;
-      status.className = 'ri-status ri-status--error';
+      setReportIssueStatus(status, err.message, { isError: true });
       submitBtn.disabled = false;
     }
   });
