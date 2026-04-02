@@ -2,12 +2,18 @@ require('dotenv').config();
 
 const express = require('express');
 const path = require('path');
+const fs = require('fs');
 const helmet = require('helmet');
 const compression = require('compression');
 const session = require('express-session');
 const rateLimit = require('express-rate-limit');
 const slowDown = require('express-slow-down');
-const APP_VERSION = require(path.join(__dirname, '..', 'package.json')).version;
+let APP_VERSION = 'unknown';
+try {
+  APP_VERSION = require(path.join(__dirname, '..', 'package.json')).version;
+} catch (e) {
+  console.error('[startup] Failed to read version from package.json:', e.message);
+}
 
 const validateRouter = require('./routes/validate');
 const companiesRouter = require('./routes/companies');
@@ -42,6 +48,12 @@ app.use(helmet({
   },
 }));
 app.use(compression({ filter: shouldCompress }));
+
+// Serve index.html with version injected server-side (async /api/config fetch fails silently on GCP)
+const indexHtml = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8')
+  .replace('id="app-version">', `id="app-version"> · v${APP_VERSION}`);
+app.get(['/', '/index.html'], (_req, res) => res.type('html').send(indexHtml));
+
 app.use(express.static(path.join(__dirname, '..', 'public'), { maxAge: '1d' }));
 app.use(express.json({ limit: '25mb' }));
 
@@ -138,7 +150,7 @@ app.use((err, _req, res, _next) => {
 
 if (require.main === module) {
   app.listen(PORT, () => {
-    console.log(`PBToolkit running on port ${PORT}`);
+    console.log(`PBToolkit v${APP_VERSION} running on port ${PORT}`);
   });
 }
 
