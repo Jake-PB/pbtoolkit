@@ -371,7 +371,7 @@ router.post('/import/run', pbAuth, async (req, res) => {
 
     // Step 2: Build domain → id cache
     sse.progress('Building domain cache from Productboard…', 5);
-    const domainCache = await buildDomainToIdMap(pbFetch, withRetry, fetchAllPages, 'domain cache for company import');
+    const domainCache = await buildDomainToIdMap(fetchAllPages, 'domain cache for company import');
     sse.progress(`Domain cache built (${Object.keys(domainCache).length} companies)`, 12);
 
     // Step 2: Process each row

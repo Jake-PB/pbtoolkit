@@ -57,70 +57,20 @@ async function writeRelations(allRows, idCache, pbFetch, withRetry, onLog) {
     }
   }
 
-  // ── 2. Feature ↔ Initiative ───────────────────────────────────────────────
-  for (const row of allRows.filter((r) => r._type === 'feature' && r['connected_inis_ext_key'])) {
-    const selfId = _selfId(row, idCache);
-    if (!selfId) continue;
-    const tokens = _split(row['connected_inis_ext_key']);
-    const linked = new Set();
-    for (const tok of tokens) {
-      const targetId = idCache.resolve('initiative', tok);
-      if (!targetId) { skippedLinks++; onLog('warn', `Skipped link — initiative target not resolved: ${tok}`, { entityType: row._type, extKey: row._extKey }); continue; }
-      if (targetId === selfId || linked.has(targetId)) continue;
-      linked.add(targetId);
-      const r = await _postLinkRaw(selfId, targetId, 'feature-initiative', row, pbFetch, withRetry, onLog);
-      if (r.ok) relationshipLinks++; else errors++;
-    }
-  }
+  // ── 2–5. Standard connected-entity links ─────────────────────────────────
+  // Each config: sourceTypes[], colName, targetType, linkLabel(entityType)→string
+  const LINK_CONFIGS = [
+    { sourceTypes: ['feature'],                              colName: 'connected_inis_ext_key', targetType: 'initiative', linkLabel: () => 'feature-initiative'    },
+    { sourceTypes: ['initiative'],                           colName: 'connected_objs_ext_key', targetType: 'objective',  linkLabel: () => 'initiative-objective'   },
+    { sourceTypes: ['feature'],                              colName: 'connected_objs_ext_key', targetType: 'objective',  linkLabel: () => 'feature-objective'      },
+    { sourceTypes: ['feature', 'initiative', 'subfeature'],  colName: 'connected_rels_ext_key', targetType: 'release',   linkLabel: (t) => `${t}-release`          },
+  ];
 
-  // ── 3. Initiative ↔ Objective ─────────────────────────────────────────────
-  for (const row of allRows.filter((r) => r._type === 'initiative' && r['connected_objs_ext_key'])) {
-    const selfId = _selfId(row, idCache);
-    if (!selfId) continue;
-    const tokens = _split(row['connected_objs_ext_key']);
-    const linked = new Set();
-    for (const tok of tokens) {
-      const targetId = idCache.resolve('objective', tok);
-      if (!targetId) { skippedLinks++; onLog('warn', `Skipped link — objective target not resolved: ${tok}`, { entityType: row._type, extKey: row._extKey }); continue; }
-      if (targetId === selfId || linked.has(targetId)) continue;
-      linked.add(targetId);
-      const r = await _postLinkRaw(selfId, targetId, 'initiative-objective', row, pbFetch, withRetry, onLog);
-      if (r.ok) relationshipLinks++; else errors++;
-    }
-  }
-
-  // ── 4. Feature ↔ Objective ────────────────────────────────────────────────
-  for (const row of allRows.filter((r) => r._type === 'feature' && r['connected_objs_ext_key'])) {
-    const selfId = _selfId(row, idCache);
-    if (!selfId) continue;
-    const tokens = _split(row['connected_objs_ext_key']);
-    const linked = new Set();
-    for (const tok of tokens) {
-      const targetId = idCache.resolve('objective', tok);
-      if (!targetId) { skippedLinks++; onLog('warn', `Skipped link — objective target not resolved: ${tok}`, { entityType: row._type, extKey: row._extKey }); continue; }
-      if (targetId === selfId || linked.has(targetId)) continue;
-      linked.add(targetId);
-      const r = await _postLinkRaw(selfId, targetId, 'feature-objective', row, pbFetch, withRetry, onLog);
-      if (r.ok) relationshipLinks++; else errors++;
-    }
-  }
-
-  // ── 5. Feature / Initiative / Subfeature ↔ Release ────────────────────────
-  for (const entityType of ['feature', 'initiative', 'subfeature']) {
-    for (const row of allRows.filter((r) => r._type === entityType && r['connected_rels_ext_key'])) {
-      const selfId = _selfId(row, idCache);
-      if (!selfId) continue;
-      const tokens = _split(row['connected_rels_ext_key']);
-      const linked = new Set();
-      for (const tok of tokens) {
-        const targetId = idCache.resolve('release', tok);
-        if (!targetId) { skippedLinks++; onLog('warn', `Skipped link — release target not resolved: ${tok}`, { entityType: row._type, extKey: row._extKey }); continue; }
-        if (targetId === selfId || linked.has(targetId)) continue;
-        linked.add(targetId);
-        const r = await _postLinkRaw(selfId, targetId, `${entityType}-release`, row, pbFetch, withRetry, onLog);
-        if (r.ok) relationshipLinks++; else errors++;
-      }
-    }
+  for (const config of LINK_CONFIGS) {
+    const r = await _processLinks(allRows, idCache, config, pbFetch, withRetry, onLog);
+    relationshipLinks += r.relationshipLinks;
+    skippedLinks      += r.skippedLinks;
+    errors            += r.errors;
   }
 
   // ── 6. Feature / Subfeature / Initiative isBlockedBy ─────────────────────
@@ -185,9 +135,27 @@ function _is409(err) {
   return err && (err.status === 409 || String(err.message || '').includes('409'));
 }
 
-async function _postLink(selfId, targetId, label, row, pbFetch, withRetry, onLog) {
-  const r = await _postLinkRaw(selfId, targetId, label, row, pbFetch, withRetry, onLog);
-  return r.ok ? 1 : 0;
+async function _processLinks(allRows, idCache, { sourceTypes, colName, targetType, linkLabel }, pbFetch, withRetry, onLog) {
+  let relationshipLinks = 0;
+  let skippedLinks = 0;
+  let errors = 0;
+  for (const entityType of sourceTypes) {
+    for (const row of allRows.filter((r) => r._type === entityType && r[colName])) {
+      const selfId = _selfId(row, idCache);
+      if (!selfId) continue;
+      const tokens = _split(row[colName]);
+      const linked = new Set();
+      for (const tok of tokens) {
+        const targetId = idCache.resolve(targetType, tok);
+        if (!targetId) { skippedLinks++; onLog('warn', `Skipped link — ${targetType} target not resolved: ${tok}`, { entityType: row._type, extKey: row._extKey }); continue; }
+        if (targetId === selfId || linked.has(targetId)) continue;
+        linked.add(targetId);
+        const r = await _postLinkRaw(selfId, targetId, linkLabel(entityType), row, pbFetch, withRetry, onLog);
+        if (r.ok) relationshipLinks++; else errors++;
+      }
+    }
+  }
+  return { relationshipLinks, skippedLinks, errors };
 }
 
 async function _postLinkRaw(selfId, targetId, label, row, pbFetch, withRetry, onLog) {

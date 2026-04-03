@@ -27,8 +27,8 @@
                 </div>
 
                 <!-- Date range -->
-                <div class="form-row" style="margin-bottom:16px;">
-                  <label class="form-label">Date range</label>
+                <div class="field">
+                  <label>Date range</label>
                   <select id="ma-date-preset" class="form-select">
                     <option value="last30">Last 30 days</option>
                     <option value="last7">Last 7 days</option>
@@ -44,9 +44,9 @@
                 </div>
 
                 <!-- Role filter -->
-                <div class="form-row" style="margin-bottom:16px;">
+                <div class="field">
                   <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">
-                    <label class="form-label" style="margin:0;">Roles</label>
+                    <label style="margin:0;">Roles</label>
                     <button id="btn-ma-roles-select-all"   class="btn btn-xs btn-ghost" type="button">Select all</button>
                     <button id="btn-ma-roles-deselect-all" class="btn btn-xs btn-ghost" type="button">Deselect all</button>
                   </div>
@@ -59,9 +59,9 @@
                 </div>
 
                 <!-- Team filter -->
-                <div class="form-row" style="margin-bottom:16px;">
+                <div class="field">
                   <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px;">
-                    <label class="form-label" style="margin:0;">Teams</label>
+                    <label style="margin:0;">Teams</label>
                     <span class="info-icon" data-tip="Team assignments reflect current state in Productboard, not the member's team at the time of the activity.">i</span>
                     <button id="btn-ma-teams-select-all"   class="btn btn-xs btn-ghost" type="button">Select all</button>
                     <button id="btn-ma-teams-deselect-all" class="btn btn-xs btn-ghost" type="button">Deselect all</button>
@@ -78,7 +78,7 @@
                 </div>
 
                 <!-- Include zero-activity -->
-                <div class="form-row" style="margin-bottom:12px;">
+                <div class="field" style="margin-bottom:12px;">
                   <label class="checkbox-label">
                     <input type="checkbox" id="ma-include-zero" checked>
                     Include members with no records
@@ -87,9 +87,9 @@
                 </div>
 
                 <!-- Active / Inactive filter -->
-                <div class="form-row" style="margin-bottom:12px;">
+                <div class="field" style="margin-bottom:12px;">
                   <div style="display:flex;align-items:center;gap:6px;margin-bottom:0;">
-                    <label class="form-label" style="margin:0;">Activity filter</label>
+                    <label style="margin:0;">Activity filter</label>
                     <span class="info-icon" data-tip="Filters by whether Productboard counted a member as active on a given day. Active only: had at least 1 active day in the period. Inactive only: had records but 0 active days (logged some events but not enough for Productboard to flag as active). Note: members with no records at all are only included if 'Include members with no records' is checked — inactive only will include them too.">i</span>
                   </div>
                   <div style="display:flex;gap:16px;margin-top:4px;">
@@ -100,7 +100,7 @@
                 </div>
 
                 <!-- Raw mode -->
-                <div class="form-row" style="margin-bottom:20px;">
+                <div class="field" style="margin-bottom:20px;">
                   <label class="checkbox-label">
                     <input type="checkbox" id="ma-raw-mode">
                     Export raw daily data

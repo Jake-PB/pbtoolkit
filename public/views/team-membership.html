@@ -22,9 +22,9 @@
               <div id="tm-export-idle">
 
                 <!-- Format selector -->
-                <div class="form-row" style="margin-bottom:16px;">
+                <div class="field">
                   <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px;">
-                    <label class="form-label" style="margin:0;">CSV format</label>
+                    <label style="margin:0;">CSV format</label>
                   </div>
                   <div style="display:flex;flex-direction:column;gap:8px;">
                     <label class="checkbox-label">
@@ -43,9 +43,9 @@
                 </div>
 
                 <!-- Team filter -->
-                <div class="form-row" style="margin-bottom:16px;">
+                <div class="field">
                   <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px;">
-                    <label class="form-label" style="margin:0;">Teams</label>
+                    <label style="margin:0;">Teams</label>
                     <button id="btn-tm-export-teams-select-all"   class="btn btn-xs btn-ghost" type="button">Select all</button>
                     <button id="btn-tm-export-teams-deselect-all" class="btn btn-xs btn-ghost" type="button">Deselect all</button>
                     <button id="btn-tm-export-refresh" class="btn btn-xs btn-ghost" style="margin-left:auto;" type="button">↺ Refresh data</button>
@@ -115,7 +115,7 @@
               <div id="tm-import-idle">
 
                 <!-- File upload -->
-                <div class="form-row" style="margin-bottom:16px;">
+                <div class="field">
                   <div class="dropzone" id="tm-import-dropzone">
                     <span class="dropzone-icon">📄</span>
                     <div class="dropzone-label">Drop a CSV file here</div>
@@ -126,8 +126,8 @@
                 </div>
 
                 <!-- Mode selector -->
-                <div class="form-row" style="margin-bottom:16px;">
-                  <label class="form-label">Import mode</label>
+                <div class="field">
+                  <label>Import mode</label>
                   <div style="display:flex;flex-direction:column;gap:8px;margin-top:4px;">
                     <label class="checkbox-label">
                       <input type="radio" name="tm-import-mode" id="tm-import-mode-set" value="set" checked>

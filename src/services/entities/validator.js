@@ -19,7 +19,7 @@ const { cell } = require('./csvParser');
 
 const UUID_RE    = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const DATE_RE    = /^\d{4}-\d{2}-\d{2}$/;
-const EMAIL_RE   = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const EMAIL_RE   = /<?([A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,})>?/i;
 
 /**
  * Validate rows for one entity type.
@@ -111,7 +111,7 @@ function validateEntityRows(entityType, rows, mapping) {
 
     // ── Email format for health updated-by ───────────────────────────────────
     const healthBy = cell(row, healthByCol);
-    if (healthBy && !EMAIL_RE.test(healthBy)) {
+    if (healthBy && !healthBy.match(EMAIL_RE)) {
       errors.push({
         row:     rowNum,
         field:   healthByCol,

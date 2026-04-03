@@ -19,7 +19,7 @@ const { sanitizeDescription } = require('../services/entities/fieldBuilder');
 const { formatFieldValue } = require('../services/entities/exporter');
 const { schemaToType, normalizeSchema, EXCLUDED_FIELD_IDS } = require('../services/entities/configCache');
 const { formatCustomFieldValue, isMultiType } = require('../lib/fieldFormat');
-const { fetchCompaniesWithDomainKey, buildDomainToIdMap, buildIdToDomainMap } = require('../lib/domainCache');
+const { buildDomainToIdMap, buildIdToDomainMap } = require('../lib/domainCache');
 
 const STANDARD_FIELD_IDS = new Set(['name', 'email', 'description', 'owner', 'archived']);
 
@@ -119,7 +119,7 @@ router.post('/export', pbAuth, async (_req, res) => {
 
     // Step 2: Fetch all companies → build id→domain lookup
     sse.progress('Fetching companies for parent lookup…', 12);
-    const companyDomainMap = await buildIdToDomainMap(pbFetch, withRetry, fetchAllPages, 'fetch companies for user export');
+    const companyDomainMap = await buildIdToDomainMap(fetchAllPages, 'fetch companies for user export');
     sse.progress(`Company lookup built (${Object.keys(companyDomainMap).length} companies)`, 15);
 
     // Step 3: Fetch all users
@@ -296,17 +296,17 @@ router.post('/import/preview', pbAuth, async (req, res) => {
       : new Set(),
     // Company lookup: needed when parent company columns are mapped
     needCompanies
-      ? fetchCompaniesWithDomainKey(pbFetch, withRetry, fetchAllPages, 'companies for user validate')
-      : { companies: [], domainFieldKey: null },
+      ? fetchAllPages('/v2/entities?type[]=company', 'companies for user validate')
+      : [],
   ]);
 
   // Build company ID set (for UUID validation) and domain→id map (for domain resolution)
   const companyIdSet = new Set();
   const companyDomainMap = {};
   if (needCompanies) {
-    for (const c of companyDomainCache.companies) {
+    for (const c of companyDomainCache) {
       companyIdSet.add(c.id);
-      const domain = companyDomainCache.domainFieldKey ? c.fields?.[companyDomainCache.domainFieldKey] : null;
+      const domain = c.fields?.domain;
       if (domain) companyDomainMap[domain.toLowerCase()] = c.id;
     }
   }
@@ -447,7 +447,7 @@ router.post('/import/run', pbAuth, async (req, res) => {
       sse.progress('Building lookups…', 12);
       const [companies, members] = await Promise.all([
         needCompanies
-          ? buildDomainToIdMap(pbFetch, withRetry, fetchAllPages, 'domain cache for user import')
+          ? buildDomainToIdMap(fetchAllPages, 'domain cache for user import')
           : {},
         needMembers
           ? fetchAllPages('/v2/members', 'fetch members for owner validation')

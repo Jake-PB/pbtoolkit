@@ -785,3 +785,6 @@ window.initNotesModule = initNotesModule;
 
 // ── pb:disconnect / pb:connected ───────────────────────────
 window.addEventListener('pb:disconnect', resetNotesState);
+window.addEventListener('pb:connected', () => {
+  if (_notesInitDone) resetNotesExport();
+});
