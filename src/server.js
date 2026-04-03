@@ -51,10 +51,19 @@ app.use(compression({ filter: shouldCompress }));
 
 // Serve index.html with version injected server-side (async /api/config fetch fails silently on GCP)
 const indexHtml = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8')
-  .replace('id="app-version">', `id="app-version"> · v${APP_VERSION}`);
+  .replace('id="app-version">', `id="app-version"> · v${APP_VERSION}`)
+  .replace('href="style.css"', `href="style.css?v=${APP_VERSION}"`)
+  .replace(/src="([\w-]+\.js)"/g, `src="$1?v=${APP_VERSION}"`);
 app.get(['/', '/index.html'], (_req, res) => res.type('html').send(indexHtml));
 
-app.use(express.static(path.join(__dirname, '..', 'public'), { maxAge: '1d' }));
+app.use(express.static(path.join(__dirname, '..', 'public'), {
+  maxAge: '1d',
+  setHeaders(res, filePath) {
+    if (filePath.endsWith('.js') || filePath.endsWith('.css')) {
+      res.setHeader('Cache-Control', 'no-cache');
+    }
+  },
+}));
 app.use(express.json({ limit: '25mb' }));
 
 app.use(session({

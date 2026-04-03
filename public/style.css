@@ -237,6 +237,8 @@ body {
 }
 .btn-back-home:hover { background: var(--c-border); color: var(--c-text); }
 
+.mobile-nav-toggle { display: none; }
+
 /* ── Panel / Card ── */
 .panel {
   background: var(--c-surface);
@@ -1203,18 +1205,51 @@ input:focus, select:focus, textarea:focus {
   /* sidebar-nav is just a pass-through block; grid goes on the wrapper divs */
   .sidebar-nav { display: block; }
 
-  #sidebar-companies,
-  #sidebar-notes,
-  #sidebar-entities,
-  #sidebar-member-activity,
-  #sidebar-teams {
+  /* Collapsed by default — toggle button reveals the active sidebar */
+  .sidebar-nav > div { display: none; }
+
+  .sidebar-nav.mobile-nav-open > div:not(.hidden) {
     display: grid;
     grid-template-columns: 1fr;
     gap: 4px;
+    margin-top: 4px;
   }
 
-  .nav-section-label,
-  .nav-group-label { display: none; }
+  .mobile-nav-toggle {
+    -webkit-appearance: none;
+    appearance: none;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    width: 100%;
+    background: var(--c-surface);
+    border: 1px solid var(--c-border);
+    border-radius: var(--r-md);
+    padding: 10px 14px;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--c-text);
+    cursor: pointer;
+    gap: 8px;
+    font-family: var(--font);
+  }
+
+  .mobile-nav-toggle:hover { background: var(--c-bg-hover); }
+
+  .mobile-nav-chevron {
+    font-style: normal;
+    transition: transform 0.15s;
+    flex-shrink: 0;
+  }
+
+  .sidebar-nav.mobile-nav-open .mobile-nav-chevron { transform: rotate(180deg); }
+
+  .nav-section-label { display: none; }
+
+  .nav-group-label {
+    margin: 8px 0 2px;
+    font-size: 10px;
+  }
 
   .nav-item {
     width: auto;
@@ -1763,6 +1798,57 @@ input:focus, select:focus, textarea:focus {
 .mtm-add-result-row:hover { background: var(--c-bg); }
 .mtm-add-name { font-weight: 500; }
 .mtm-add-email { font-size: 12px; color: var(--c-muted); text-align: right; }
+
+/* ── Members & Teams: mobile layout ─────────────────────── */
+@media (max-width: 768px) {
+  /* Single-column team cards, no horizontal bleed */
+  .mtm-team-list {
+    grid-template-columns: 1fr;
+  }
+  .mtm-team-card {
+    min-width: 0;
+    overflow: hidden;
+  }
+
+  /* Contain member list overflow on both axes */
+  .mtm-member-list {
+    overflow-x: hidden;
+  }
+
+  /* Toolbar: stack search above buttons */
+  .mtm-toolbar {
+    flex-wrap: wrap;
+  }
+  .mtm-search-wrap {
+    flex-basis: 100%;
+  }
+  .mtm-search-wrap input {
+    max-width: 100%;
+  }
+
+  /* Always show the remove button on touch (no hover) */
+  .mtm-member-remove {
+    opacity: 1;
+  }
+
+  /* Modal: contain horizontal overflow, shrink results list */
+  .mtm-modal-body {
+    overflow-x: hidden;
+  }
+  .mtm-add-results {
+    max-height: 40vh;
+    overflow-x: hidden;
+  }
+  .mtm-add-result-row {
+    overflow: hidden;
+  }
+  .mtm-add-email {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 40%;
+  }
+}
 
 /* ── Shared confirm / alert dialog ──────────────────────── */
 .app-dialog-overlay {

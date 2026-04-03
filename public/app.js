@@ -639,6 +639,14 @@ $('btn-disconnect').addEventListener('click', async () => {
   window.dispatchEvent(new CustomEvent('pb:disconnect'));
 });
 
+// ── Mobile nav toggle ───────────────────────────────────────
+const _sidebarNav = document.querySelector('.sidebar-nav');
+const _mobileNavLabel = $('mobile-nav-label');
+
+$('mobile-nav-toggle')?.addEventListener('click', () => {
+  _sidebarNav?.classList.toggle('mobile-nav-open');
+});
+
 // ── Tool nav (inside tool view) ─────────────────────────────
 document.querySelectorAll('.nav-item').forEach((btn) => {
   btn.addEventListener('click', () => {
@@ -668,6 +676,10 @@ function showView(view, { updateUrl = false } = {}) {
   document.querySelectorAll('.nav-item').forEach((b) => b.classList.remove('active'));
   const navBtn = document.querySelector(`.nav-item[data-view="${view}"]`);
   if (navBtn) navBtn.classList.add('active');
+
+  // Mobile: collapse nav and update toggle label
+  _sidebarNav?.classList.remove('mobile-nav-open');
+  if (_mobileNavLabel && navBtn) _mobileNavLabel.textContent = navBtn.textContent.trim();
 
   if (updateUrl && _currentTool) {
     const path = buildPath(_currentTool, view);
