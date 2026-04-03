@@ -37,6 +37,8 @@
     _scanData = null;
     _auditLog = null;
     if (_logAppender) _logAppender.reset();
+    nmHide('nm-compare-overlay');
+    _splitGroup = null;
     nmGo('idle');
   }
 
@@ -51,10 +53,10 @@
 
   // ── Scan ──────────────────────────────────────────────────
   function startScan() {
-    if (!requireToken(() => startScan())) return;
+    if (!token) { requireToken(() => startScan()); return; }
 
-    const createdFrom = nm$('nm-date-from')?.value || '';
-    const createdTo   = nm$('nm-date-to')?.value   || '';
+    const createdFrom = nm$('nm-date-from')?.value ? nm$('nm-date-from').value + 'T00:00:00.000Z' : '';
+    const createdTo   = nm$('nm-date-to')?.value   ? nm$('nm-date-to').value   + 'T23:59:59.999Z' : '';
     const looseMatch  = nm$('nm-loose-match')?.checked || false;
     const targetMode  = document.querySelector('input[name="nm-target-mode"]:checked')?.value || 'newest';
 
@@ -81,6 +83,11 @@
     });
   }
 
+  // ── Compare modal state ───────────────────────────────────
+  let _splitGroup      = null;
+  let _splitGroupIndex = 0;
+  let _splitSecIndex   = 0;
+
   // ── Render preview ────────────────────────────────────────
   function renderPreview(data) {
     const { groups = [], partialMatchGroups = [], stats } = data;
@@ -92,7 +99,7 @@
         summaryEl.textContent = `Scanned ${stats.totalNotes.toLocaleString()} notes — no duplicate groups found.`;
       } else {
         let text = `Found ${stats.groupsFound} duplicate group(s) across ${stats.notesInGroups} notes — ${stats.notesToDelete} note(s) will be deleted.`;
-        if (stats.oversizedGroups > 0) text += ` ${stats.oversizedGroups} group(s) with 100+ notes were skipped — review manually.`;
+        if (stats.oversizedGroups > 0) text += ` ${stats.oversizedGroups} group(s) with 100+ notes were skipped.`;
         summaryEl.textContent = text;
       }
     }
@@ -105,21 +112,22 @@
 
     nmHide('nm-no-duplicates');
     nmShow('nm-groups-wrap');
+    nmHide('nm-split-view');
 
     // Oversized warning
     if (stats.oversizedGroups > 0) {
-      nmText('nm-oversized-warn-text', `${stats.oversizedGroups} group(s) with 100+ notes were skipped — they require manual review and are not included below.`);
+      nmText('nm-oversized-warn-text', `${stats.oversizedGroups} group(s) with 100+ notes were skipped — review manually.`);
       nmShow('nm-oversized-warn');
     } else {
       nmHide('nm-oversized-warn');
     }
 
-    // Groups table
-    const tbody = nm$('nm-groups-tbody');
-    if (tbody) {
-      tbody.innerHTML = '';
+    // Collapsible groups
+    const listEl = nm$('nm-groups-list');
+    if (listEl) {
+      listEl.innerHTML = '';
       groups.forEach((group, gi) => {
-        appendGroupRows(tbody, group, gi + 1);
+        listEl.appendChild(buildGroupBlock(group, gi));
       });
     }
 
@@ -135,10 +143,10 @@
             const tr = document.createElement('tr');
             tr.innerHTML = `
               <td>${gi + 1}</td>
-              <td>${esc(note.title)}</td>
-              <td>${esc(note.customer_email || note.customer_company || '—')}</td>
-              <td>${esc(note.owner_email || '—')}</td>
-              <td>${esc(note.state)}</td>
+              <td>${esc(note.title || '—')}</td>
+              <td style="font-size:12px;">${esc(note.customer_email || note.customer_company || '—')}</td>
+              <td style="font-size:12px;">${esc(note.owner_email || '—')}</td>
+              <td style="font-size:12px;">${esc(note.state)}</td>
               <td style="font-size:11px;color:var(--c-muted);">${esc(note.created_at ? note.created_at.slice(0, 10) : '—')}</td>
             `;
             ptbody.appendChild(tr);
@@ -150,51 +158,354 @@
     }
   }
 
-  function appendGroupRows(tbody, group, groupNum) {
+  /** Build a collapsible <details> block for one duplicate group. */
+  function buildGroupBlock(group, gi) {
     const { target, secondaries } = group;
+    const total = 1 + secondaries.length;
 
-    function makeRow(note, role) {
-      const isTarget = role === 'Target';
+    const details = document.createElement('details');
+    details.open = true;
+    details.style.cssText = 'border:1px solid var(--c-border,#e2e8f0);border-radius:6px;margin-bottom:8px;overflow:hidden;';
+
+    // Summary / header
+    const summary = document.createElement('summary');
+    summary.style.cssText = [
+      'cursor:pointer;list-style:none;padding:10px 14px;',
+      'display:flex;align-items:center;gap:10px;',
+      'background:var(--c-bg-alt,#f8f9fa);font-size:13px;font-weight:500;user-select:none;',
+    ].join('');
+
+    const groupLabel = document.createElement('span');
+    groupLabel.textContent = `Group ${gi + 1}`;
+
+    const countLabel = document.createElement('span');
+    countLabel.style.cssText = 'color:var(--c-muted);font-weight:400;';
+    countLabel.textContent = `${total} note${total > 1 ? 's' : ''} · ${secondaries.length} to delete`;
+
+    const spacer = document.createElement('span');
+    spacer.style.flex = '1';
+
+    const compareHint = document.createElement('span');
+    compareHint.style.cssText = 'font-size:11px;color:var(--c-muted);font-weight:400;';
+    compareHint.textContent = 'click a row to compare';
+
+    const mergeOneBtn = document.createElement('button');
+    mergeOneBtn.className = 'btn btn-danger btn-sm';
+    mergeOneBtn.textContent = 'Merge this group';
+    mergeOneBtn.addEventListener('click', (e) => {
+      e.stopPropagation(); // don't toggle the details element
+      runSingleGroupMerge(group, gi + 1);
+    });
+
+    summary.append(groupLabel, countLabel, spacer, compareHint, mergeOneBtn);
+    details.appendChild(summary);
+
+    // Compact table
+    const table = document.createElement('table');
+    table.className = 'mapping-table';
+    table.style.marginBottom = '0';
+    table.innerHTML = `
+      <thead>
+        <tr>
+          <th style="width:80px;">Role</th>
+          <th>Title</th>
+          <th>Customer</th>
+          <th>State</th>
+          <th>Created</th>
+        </tr>
+      </thead>
+    `;
+    const tbody = document.createElement('tbody');
+
+    function addRow(note, isTarget, secIndex) {
       const tr = document.createElement('tr');
-      if (isTarget) tr.style.fontWeight = '600';
+      tr.style.cssText = 'cursor:pointer;';
+      tr.title = 'Click to compare';
 
       const roleBadge = isTarget
-        ? '<span class="badge badge-ok" style="font-size:10px;">Target</span>'
+        ? '<span class="badge badge-ok"  style="font-size:10px;">Target</span>'
         : '<span class="badge badge-danger" style="font-size:10px;">Delete</span>';
 
-      const customer = esc(note.customer_email || note.customer_company || '—');
-      const tags     = note.tags?.length ? esc(note.tags.join(', ')) : '<span style="color:var(--c-muted)">—</span>';
-      const links    = note.product_links?.length
-        ? `<span style="color:var(--c-muted);font-size:11px;">${note.product_links.length} link(s)</span>`
-        : '<span style="color:var(--c-muted)">—</span>';
-
-      const sourceCell = note.source_origin
-        ? `<span title="Source data will be discarded" style="color:var(--c-muted);font-size:11px;text-decoration:line-through;">${esc(note.source_origin)}</span>`
-        : '<span style="color:var(--c-muted)">—</span>';
-
       tr.innerHTML = `
-        <td style="color:var(--c-muted);font-size:12px;">${groupNum}</td>
         <td>${roleBadge}</td>
-        <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${esc(note.title)}">${esc(note.title) || '<em style="color:var(--c-muted)">untitled</em>'}</td>
-        <td style="font-size:12px;">${customer}</td>
-        <td style="font-size:12px;">${esc(note.owner_email || '—')}</td>
-        <td style="font-size:12px;">${tags}</td>
-        <td style="font-size:12px;">${links}</td>
-        <td style="font-size:11px;">${sourceCell}</td>
+        <td style="max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;${isTarget ? 'font-weight:600;' : ''}"
+            title="${esc(note.title)}">${esc(note.title) || '<em style="color:var(--c-muted)">untitled</em>'}</td>
+        <td style="font-size:12px;">${esc(note.customer_email || note.customer_company || '—')}</td>
         <td style="font-size:12px;">${esc(note.state)}</td>
         <td style="font-size:11px;color:var(--c-muted);">${esc(note.created_at ? note.created_at.slice(0, 10) : '—')}</td>
       `;
+
+      tr.addEventListener('click', () => {
+        openSplitView(group, isTarget ? 0 : secIndex);
+      });
+
+      // Hover highlight
+      tr.addEventListener('mouseenter', () => { tr.style.background = 'var(--c-bg-hover,#f1f5f9)'; });
+      tr.addEventListener('mouseleave', () => { tr.style.background = ''; });
+
       tbody.appendChild(tr);
     }
 
-    makeRow(target, 'Target');
-    secondaries.forEach(s => makeRow(s, 'Delete'));
+    addRow(target, true, 0);
+    secondaries.forEach((s, si) => addRow(s, false, si));
+    table.appendChild(tbody);
+    details.appendChild(table);
+    return details;
+  }
 
-    // Separator row between groups
-    const sep = document.createElement('tr');
-    sep.style.height = '4px';
-    sep.innerHTML = '<td colspan="10" style="border:none;background:var(--c-bg-alt,#f4f4f5);padding:0;"></td>';
-    tbody.appendChild(sep);
+  // ── Compare modal ──────────────────────────────────────────
+  function openSplitView(group, secIndex) {
+    const groups = _scanData?.groups || [];
+    _splitGroupIndex = groups.indexOf(group);
+    if (_splitGroupIndex === -1) _splitGroupIndex = 0;
+    _splitGroup    = group;
+    _splitSecIndex = secIndex;
+    renderSplitPanel();
+    nmShow('nm-compare-overlay');
+  }
+
+  function renderSplitPanel() {
+    const groups      = _scanData?.groups || [];
+    const { target, secondaries } = _splitGroup;
+    const sec         = secondaries[_splitSecIndex];
+    const totalSec    = secondaries.length;
+    const totalGroups = groups.length;
+    const showMerged  = nm$('nm-split-preview-merge')?.checked || false;
+
+    // Header labels
+    nmText('nm-cmp-group-label', `Group ${_splitGroupIndex + 1} of ${totalGroups} — ${target.title || '(untitled)'}`);
+    nmText('nm-cmp-group-nav',   `${_splitGroupIndex + 1} / ${totalGroups}`);
+    nmText('nm-cmp-sec-nav',     `secondary ${_splitSecIndex + 1} / ${totalSec}`);
+
+    // Group nav buttons
+    const prevGrpBtn = nm$('nm-cmp-prev-group');
+    const nextGrpBtn = nm$('nm-cmp-next-group');
+    if (prevGrpBtn) prevGrpBtn.disabled = _splitGroupIndex === 0;
+    if (nextGrpBtn) nextGrpBtn.disabled = _splitGroupIndex === totalGroups - 1;
+
+    // Secondary nav buttons
+    const prevSecBtn = nm$('nm-cmp-prev-sec');
+    const nextSecBtn = nm$('nm-cmp-next-sec');
+    if (prevSecBtn) prevSecBtn.disabled = _splitSecIndex === 0;
+    if (nextSecBtn) nextSecBtn.disabled = _splitSecIndex === totalSec - 1;
+
+    // Panels
+    const leftEl  = nm$('nm-split-left');
+    const rightEl = nm$('nm-split-right');
+    if (leftEl)  leftEl.innerHTML  = showMerged
+      ? renderNoteCardMerged(_splitGroup)
+      : renderNoteCard(target, 'TARGET — kept', false, null);
+    if (rightEl) rightEl.innerHTML = renderNoteCard(sec, `SECONDARY ${_splitSecIndex + 1} — deleted`, true, target);
+  }
+
+  function closeCompareModal() {
+    nmHide('nm-compare-overlay');
+    _splitGroup = null;
+  }
+
+  function navigateGroup(delta) {
+    const groups = _scanData?.groups || [];
+    const next   = _splitGroupIndex + delta;
+    if (next < 0 || next >= groups.length) return;
+    _splitGroupIndex = next;
+    _splitGroup      = groups[next];
+    _splitSecIndex   = 0;
+    renderSplitPanel();
+  }
+
+  function navigateSec(delta) {
+    const next = _splitSecIndex + delta;
+    if (!_splitGroup || next < 0 || next >= _splitGroup.secondaries.length) return;
+    _splitSecIndex = next;
+    renderSplitPanel();
+  }
+
+  /** Render the target card showing what it will look like after merge rules are applied.
+   *  Items that will be added are highlighted in purple. */
+  function renderNoteCardMerged(group) {
+    const { target, secondaries } = group;
+    const STATE_PRI = { processed: 0, unprocessed: 1, archived: 2 };
+
+    // Tags: existing stay, new ones from secondaries shown in purple
+    const existingTags = new Set(target.tags || []);
+    const newTags = [...new Set(secondaries.flatMap(s => s.tags || []))].filter(t => !existingTags.has(t));
+
+    // Links: same logic
+    const existingLinks = new Set(target.product_links || []);
+    const newLinks = [...new Set(secondaries.flatMap(s => s.product_links || []))].filter(id => !existingLinks.has(id));
+
+    // State reconciliation
+    const allStates   = [target, ...secondaries].map(n => n.state || 'unprocessed');
+    const mergedState = allStates.reduce((best, s) => (STATE_PRI[s] ?? 99) < (STATE_PRI[best] ?? 99) ? s : best);
+    const stateChanged = mergedState !== (target.state || 'unprocessed');
+
+    // Followers: secondary owners that aren't already the target owner
+    const targetOwner  = target.owner_email || '';
+    const newFollowers = [...new Set(secondaries.map(s => s.owner_email).filter(e => e && e !== targetOwner))];
+
+    // Customer: upgrade from company to user if a secondary has a user rel
+    let newCustomerLabel = null;
+    if (target.customer_type !== 'user') {
+      const secWithUser = secondaries.find(s => s.customer_type === 'user' && s.customer_id);
+      if (secWithUser) newCustomerLabel = secWithUser.customer_email || secWithUser.customer_id;
+    }
+
+    const purple = (html) => `<span style="color:#7c3aed;font-weight:500;">${html}</span>`;
+
+    const customerHtml = newCustomerLabel
+      ? `${esc(target.customer_email || target.customer_company || '—')} → ${purple(esc(newCustomerLabel))}`
+      : esc(target.customer_email || target.customer_company || '—');
+
+    const tagsHtml = [
+      ...[...existingTags].map(t => esc(t)),
+      ...newTags.map(t => purple(`+ ${esc(t)}`)),
+    ].join(', ') || '—';
+
+    const linksHtml = [
+      ...(existingLinks.size  ? [`${existingLinks.size} existing`]               : []),
+      ...(newLinks.length     ? [purple(`+ ${newLinks.length} new`)]              : []),
+    ].join(', ') || '—';
+
+    const stateHtml = stateChanged
+      ? `${esc(target.state || 'unprocessed')} → ${purple(esc(mergedState))}`
+      : esc(mergedState);
+
+    const followersHtml = newFollowers.length
+      ? newFollowers.map(e => purple(esc(e))).join(', ')
+      : '<span style="color:var(--c-muted)">none</span>';
+
+    function row(label, value) {
+      return `<div style="display:flex;gap:8px;padding:5px 0;border-bottom:1px solid var(--c-border,#e2e8f0);font-size:12px;">
+        <span style="width:76px;flex-shrink:0;color:var(--c-muted);font-weight:500;">${label}</span>
+        <span style="min-width:0;word-break:break-word;">${value}</span>
+      </div>`;
+    }
+
+    return `
+      <div style="font-size:10px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--c-ok,#22c55e);margin-bottom:6px;">TARGET — POST-MERGE PREVIEW</div>
+      <div style="font-size:11px;color:#7c3aed;margin-bottom:10px;">Items in purple will be added during merge.</div>
+      <div style="font-size:14px;font-weight:600;margin-bottom:12px;line-height:1.3;">${esc(target.title || '(untitled)')}</div>
+      <div style="font-size:11px;color:var(--c-muted);margin-bottom:4px;font-weight:500;">Content preview</div>
+      <div style="font-size:12px;background:var(--c-bg-alt,#f8f9fa);border:1px solid var(--c-border,#e2e8f0);border-radius:4px;padding:8px;max-height:100px;overflow-y:auto;white-space:pre-wrap;word-break:break-word;margin-bottom:12px;line-height:1.5;">${esc(target.content_preview || '—')}${target.content_preview?.length >= 100 ? '<span style="color:var(--c-muted)">…</span>' : ''}</div>
+      ${row('Customer',  customerHtml)}
+      ${row('Owner',     esc(target.owner_email || '—'))}
+      ${row('Tags',      tagsHtml)}
+      ${row('Links',     linksHtml)}
+      ${row('Source',    esc(target.source_origin || '—'))}
+      ${row('State',     stateHtml)}
+      ${row('Created',   esc(target.created_at ? target.created_at.slice(0, 10) : '—'))}
+      ${row('Followers', followersHtml)}
+    `;
+  }
+
+  /**
+   * Render a note detail card.
+   * When target is provided (secondary panel), fields are compared against the target:
+   *   - Data that will be merged/transferred → normal colour
+   *   - Data that will be permanently lost   → red with a "lost" tooltip
+   *   - Data identical to the target         → muted
+   */
+  function renderNoteCard(note, label, isSecondary, target) {
+    const lost = (html, reason) =>
+      `<span style="color:var(--c-danger,#ef4444);" title="${esc(reason)}">${html} <span style="font-size:10px;">✕ lost</span></span>`;
+    const muted = (html) =>
+      `<span style="color:var(--c-muted);">${html}</span>`;
+
+    function row(fieldLabel, value) {
+      return `<div style="display:flex;gap:8px;padding:5px 0;border-bottom:1px solid var(--c-border,#e2e8f0);font-size:12px;">
+        <span style="width:76px;flex-shrink:0;color:var(--c-muted);font-weight:500;">${fieldLabel}</span>
+        <span style="min-width:0;word-break:break-word;">${value}</span>
+      </div>`;
+    }
+
+    // ── Field values ──────────────────────────────────────────
+    const customer = note.customer_email || note.customer_company || '—';
+    const tags     = note.tags?.length            ? note.tags.join(', ')              : '—';
+    const links    = note.product_links?.length   ? `${note.product_links.length} link(s)` : '—';
+
+    // Title: lost when secondary title differs from target's (loose match case)
+    let titleHtml = `<div style="font-size:14px;font-weight:600;margin-bottom:12px;line-height:1.3;">`;
+    if (isSecondary && target && note.title !== target.title) {
+      titleHtml += lost(esc(note.title || '(untitled)'), 'Title differs from target and will be discarded');
+    } else {
+      titleHtml += esc(note.title || '(untitled)');
+    }
+    titleHtml += '</div>';
+
+    // Source: show origin + record_id. On secondaries, only flag source_record_id red
+    // when it differs from the target's — if they match, the target already has it (no loss).
+    let sourceHtml;
+    if (!note.source_origin && !note.source_record_id) {
+      sourceHtml = '<span style="color:var(--c-muted)">—</span>';
+    } else if (isSecondary && target) {
+      const sameRecord = note.source_record_id && note.source_record_id === target.source_record_id;
+      const originPart = note.source_origin ? esc(note.source_origin) : '';
+      const recordPart = note.source_record_id
+        ? (sameRecord
+            ? muted(esc(note.source_record_id))
+            : lost(esc(note.source_record_id), 'Source record ID is immutable — cannot be transferred to the target'))
+        : '';
+      sourceHtml = [originPart, recordPart].filter(Boolean).join(' · ') || '<span style="color:var(--c-muted)">—</span>';
+    } else {
+      const parts = [note.source_origin, note.source_record_id].filter(Boolean).map(esc);
+      sourceHtml = parts.join(' · ') || '<span style="color:var(--c-muted)">—</span>';
+    }
+
+    // Tags: on secondary, all tags will be merged → show as muted "will be merged" if target already has them, normal otherwise
+    let tagsHtml;
+    if (isSecondary && target && note.tags?.length) {
+      const targetTags = new Set(target.tags || []);
+      tagsHtml = note.tags.map(t =>
+        targetTags.has(t) ? muted(esc(t)) : esc(t)
+      ).join(', ');
+    } else {
+      tagsHtml = esc(tags);
+    }
+
+    // Links: same as tags — already-linked ones are muted, new ones normal
+    let linksHtml;
+    if (isSecondary && target && note.product_links?.length) {
+      const targetLinks = new Set(target.product_links || []);
+      const alreadyLinked = note.product_links.filter(id =>  targetLinks.has(id)).length;
+      const newLinks      = note.product_links.filter(id => !targetLinks.has(id)).length;
+      const parts = [];
+      if (newLinks      > 0) parts.push(`${newLinks} to add`);
+      if (alreadyLinked > 0) parts.push(muted(`${alreadyLinked} already linked`));
+      linksHtml = parts.join(', ') || '—';
+    } else {
+      linksHtml = esc(links);
+    }
+
+    // Owner: secondary owner becomes a follower — not lost, just note it
+    let ownerHtml = esc(note.owner_email || '—');
+    if (isSecondary && note.owner_email) {
+      ownerHtml += ` <span style="font-size:10px;color:var(--c-muted);">(→ follower)</span>`;
+    }
+
+    // Content: same content in exact mode; technically the secondary note body is discarded
+    // but content matched so it's identical to target — show as muted
+    const contentStyle = isSecondary
+      ? 'font-size:12px;background:var(--c-bg-alt,#f8f9fa);border:1px solid var(--c-border,#e2e8f0);border-radius:4px;padding:8px;max-height:100px;overflow-y:auto;white-space:pre-wrap;word-break:break-word;margin-bottom:12px;line-height:1.5;color:var(--c-muted);'
+      : 'font-size:12px;background:var(--c-bg-alt,#f8f9fa);border:1px solid var(--c-border,#e2e8f0);border-radius:4px;padding:8px;max-height:100px;overflow-y:auto;white-space:pre-wrap;word-break:break-word;margin-bottom:12px;line-height:1.5;';
+
+    const lossLegend = isSecondary
+      ? `<div style="font-size:11px;color:var(--c-danger,#ef4444);margin-bottom:10px;">Items in red will be permanently lost.</div>`
+      : '';
+
+    return `
+      <div style="font-size:10px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:${isSecondary ? 'var(--c-danger,#ef4444)' : 'var(--c-ok,#22c55e)'};margin-bottom:6px;">${esc(label)}</div>
+      ${lossLegend}
+      ${titleHtml}
+      <div style="font-size:11px;color:var(--c-muted);margin-bottom:4px;font-weight:500;">Content${isSecondary ? ' (same as target)' : ' preview'}</div>
+      <div style="${contentStyle}">${esc(note.content_preview || '—')}${note.content_preview?.length >= 100 ? '<span style="color:var(--c-muted)">…</span>' : ''}</div>
+      ${row('Customer', esc(customer))}
+      ${row('Owner',    ownerHtml)}
+      ${row('Tags',     tagsHtml)}
+      ${row('Links',    linksHtml)}
+      ${row('Source',   sourceHtml)}
+      ${row('State',    esc(note.state))}
+      ${row('Created',  esc(note.created_at ? note.created_at.slice(0, 10) : '—'))}
+    `;
   }
 
   // ── Download preview CSV ──────────────────────────────────
@@ -237,6 +548,20 @@
     ).then((confirmed) => {
       if (!confirmed) return;
       runMerge();
+    });
+  }
+
+  function runSingleGroupMerge(group, groupNum) {
+    showConfirm(
+      `Merge group ${groupNum}?\n\nThis will consolidate metadata from ${group.secondaries.length} secondary note(s) into "${group.target.title || 'untitled'}" and permanently delete the secondaries.\n\nThis cannot be undone.`,
+      { confirmText: 'Merge this group', danger: true }
+    ).then((confirmed) => {
+      if (!confirmed) return;
+      // Temporarily replace scanData.groups with just this one group so runMerge() sends only it
+      const saved = _scanData.groups;
+      _scanData.groups = [group];
+      runMerge();
+      _scanData.groups = saved;
     });
   }
 
@@ -351,6 +676,13 @@
     // Create log appender bound to the running log panel
     _logAppender = makeLogAppender('nm-run-log', 'nm-run-log-entries', 'nm-run-log-counts', 'note');
 
+    // Cap date pickers at today
+    const today = new Date().toISOString().slice(0, 10);
+    const fromInput = nm$('nm-date-from');
+    const toInput   = nm$('nm-date-to');
+    if (fromInput) fromInput.max = today;
+    if (toInput)   toInput.max   = today;
+
     // Safety gate
     nm$('nm-gate-checkbox')?.addEventListener('change', updateGate);
 
@@ -363,13 +695,39 @@
     // Preview actions
     nm$('nm-download-preview-csv')?.addEventListener('click', downloadPreviewCsv);
     nm$('nm-merge-btn')?.addEventListener('click', startMerge);
-    nm$('nm-rescan-btn')?.addEventListener('click', () => {
-      _scanData = null;
-      nmGo('idle');
+    nm$('nm-rescan-btn')?.addEventListener('click', () => { _scanData = null; nmGo('idle'); });
+    nm$('nm-no-dup-rescan')?.addEventListener('click', () => { _scanData = null; nmGo('idle'); });
+
+    // Collapse / expand all groups
+    nm$('nm-toggle-all-groups')?.addEventListener('click', () => {
+      const listEl = nm$('nm-groups-list');
+      if (!listEl) return;
+      const blocks  = listEl.querySelectorAll('details');
+      const anyOpen = [...blocks].some(d => d.open);
+      blocks.forEach(d => { d.open = !anyOpen; });
+      const btn = nm$('nm-toggle-all-groups');
+      if (btn) btn.textContent = anyOpen ? 'Expand all' : 'Collapse all';
     });
-    nm$('nm-no-dup-rescan')?.addEventListener('click', () => {
-      _scanData = null;
-      nmGo('idle');
+
+    // Compare modal controls
+    nm$('nm-split-preview-merge')?.addEventListener('change', () => { if (_splitGroup) renderSplitPanel(); });
+    nm$('nm-cmp-prev-group')?.addEventListener('click', () => navigateGroup(-1));
+    nm$('nm-cmp-next-group')?.addEventListener('click', () => navigateGroup(+1));
+    nm$('nm-cmp-prev-sec')?.addEventListener('click',   () => navigateSec(-1));
+    nm$('nm-cmp-next-sec')?.addEventListener('click',   () => navigateSec(+1));
+    nm$('nm-cmp-close')?.addEventListener('click', closeCompareModal);
+    nm$('nm-compare-overlay')?.addEventListener('click', (e) => {
+      if (e.target === nm$('nm-compare-overlay')) closeCompareModal();
+    });
+
+    // Keyboard: ← → navigate secondaries; Shift+← Shift+→ navigate groups; Escape closes
+    document.addEventListener('keydown', (e) => {
+      if (nm$('nm-compare-overlay')?.classList.contains('hidden')) return;
+      if (e.key === 'Escape')     { closeCompareModal(); }
+      else if (e.key === 'ArrowLeft'  && e.shiftKey) { e.preventDefault(); navigateGroup(-1); }
+      else if (e.key === 'ArrowRight' && e.shiftKey) { e.preventDefault(); navigateGroup(+1); }
+      else if (e.key === 'ArrowLeft')                { e.preventDefault(); navigateSec(-1);   }
+      else if (e.key === 'ArrowRight')               { e.preventDefault(); navigateSec(+1);   }
     });
 
     // Run actions

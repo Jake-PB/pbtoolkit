@@ -14,7 +14,24 @@
                   <li><strong>Scan</strong> — click "Scan for duplicates" to detect groups. No changes are made during scan.</li>
                   <li><strong>Preview</strong> — review the duplicate groups table carefully. Download the preview CSV for offline review.</li>
                   <li><strong>Merge</strong> — confirm and run. Tags, product links, and owner followers are consolidated into the target; secondary notes are deleted.</li>
-                  <li><strong>Limitations</strong> — source data (origin / record ID) from secondary notes <strong>cannot be transferred</strong> and will be discarded. Restored notes receive new IDs. Note content is never merged — only metadata is consolidated.</li>
+                  <li><strong>Limitations</strong> — source data (origin / record ID) from secondary notes <strong>cannot be transferred</strong> and will be discarded. Restored notes receive new IDs. Note text body is never combined — only metadata (tags, links, owners, state) is consolidated into the target note's existing content.</li>
+                </ul>
+                <p style="margin:12px 0 6px;font-weight:600;font-size:12px;">How duplicates are detected</p>
+                <ul>
+                  <li><strong>Matching key</strong> — two notes are considered duplicates when they share the same <em>title</em>, <em>content</em>, and <em>customer</em> (same company or same user). All three must match exactly (case-sensitive).</li>
+                  <li><strong>Loose match</strong> — when enabled, the title requirement is dropped. Notes with the same content and customer are grouped even if their titles differ. Use with caution and review the preview carefully.</li>
+                  <li><strong>Excluded notes</strong> — notes with no content or no customer relationship are excluded from detection entirely.</li>
+                </ul>
+                <p style="margin:12px 0 6px;font-weight:600;font-size:12px;">What happens during merge</p>
+                <ul>
+                  <li><strong>Target note</strong> — the note you choose to keep (newest / oldest / most metadata). Its title, content, and source data are preserved unchanged.</li>
+                  <li><strong>Tags</strong> — all unique tags from secondary notes are added to the target. Already-present tags are skipped.</li>
+                  <li><strong>Product links</strong> — all product hierarchy links from secondary notes are added to the target. Already-linked entities are skipped.</li>
+                  <li><strong>State</strong> — the highest-priority state across the group is applied to the target. Priority order: Processed &gt; Unprocessed &gt; Archived.</li>
+                  <li><strong>Owners → followers</strong> — each secondary note's owner is added as a follower on the target note. The target's owner is not changed.</li>
+                  <li><strong>Customer relationship</strong> — if the target has only a company and a secondary has a specific user from that company, the user relationship is added to the target.</li>
+                  <li><strong>Source data</strong> — source origin and record ID from secondary notes are logged in the audit but cannot be transferred. They are shown in the preview table for reference.</li>
+                  <li><strong>Deletion</strong> — secondary notes are deleted only after all metadata consolidation steps succeed for that group.</li>
                 </ul>
               </details>
             </div>
@@ -128,44 +145,24 @@
                   <button class="btn btn-secondary" id="nm-no-dup-rescan">Adjust criteria and re-scan</button>
                 </div>
 
-                <!-- Groups table -->
+                <!-- Groups list -->
                 <div id="nm-groups-wrap">
-                  <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
-                    <strong style="font-size:13px;">Duplicate groups</strong>
+
+                  <!-- Toolbar -->
+                  <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;">
+                    <button class="btn btn-ghost btn-sm" id="nm-toggle-all-groups">Collapse all</button>
                     <button class="btn btn-ghost btn-sm" id="nm-download-preview-csv">↓ Download preview CSV</button>
                   </div>
 
-                  <!-- Source data warning -->
-                  <div class="alert alert-warn" style="margin-bottom:12px;font-size:12px;">
-                    <span class="alert-icon" style="font-size:13px;">ℹ️</span>
-                    <span>Source data (origin / record ID) from secondary notes <strong>cannot be transferred</strong> and will be discarded. These are shown in the table for reference.</span>
-                  </div>
+                  <!-- Collapsible groups injected here by JS -->
+                  <div id="nm-groups-list" style="margin-bottom:8px;"></div>
 
-                  <div id="nm-groups-table-wrap" style="overflow-x:auto;margin-bottom:16px;">
-                    <table class="mapping-table" id="nm-groups-table">
-                      <thead>
-                        <tr>
-                          <th>Group</th>
-                          <th>Role</th>
-                          <th>Title</th>
-                          <th>Customer</th>
-                          <th>Owner</th>
-                          <th>Tags</th>
-                          <th>Links</th>
-                          <th>Source</th>
-                          <th>State</th>
-                          <th>Created</th>
-                        </tr>
-                      </thead>
-                      <tbody id="nm-groups-tbody"></tbody>
-                    </table>
-                  </div>
 
                   <!-- Partial matches (collapsible) -->
-                  <div id="nm-partial-matches-wrap" class="hidden" style="margin-bottom:16px;">
+                  <div id="nm-partial-matches-wrap" class="hidden" style="margin-bottom:12px;">
                     <details>
                       <summary style="cursor:pointer;font-size:13px;color:var(--c-muted);user-select:none;">
-                        ▸ <span id="nm-partial-count"></span> partial match group(s) — same content &amp; customer, different titles (no action taken)
+                        <span id="nm-partial-count"></span> partial match group(s) — same content &amp; customer, different titles (no action taken)
                       </summary>
                       <div id="nm-partial-table-wrap" style="overflow-x:auto;margin-top:8px;">
                         <table class="mapping-table" id="nm-partial-table">
@@ -261,3 +258,39 @@
             </div><!-- /panel-body -->
           </div><!-- /panel -->
         </div><!-- /view-notes-merge-view -->
+
+        <!-- ══════════════════════════════════════════
+             NOTE COMPARISON MODAL
+        ═══════════════════════════════════════════ -->
+        <div id="nm-compare-overlay" class="ri-overlay hidden">
+          <div class="ri-modal" style="width:94vw;max-width:1020px;max-height:92vh;display:flex;flex-direction:column;">
+
+            <!-- Header -->
+            <div class="ri-header" style="flex-shrink:0;">
+              <div style="display:flex;flex-direction:column;gap:4px;min-width:0;">
+                <h2 class="ri-title" id="nm-cmp-group-label" style="font-size:14px;"></h2>
+                <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
+                  <button class="btn btn-ghost btn-sm" id="nm-cmp-prev-group" title="Previous group">← Group</button>
+                  <span id="nm-cmp-group-nav" style="font-size:12px;color:var(--c-muted);"></span>
+                  <button class="btn btn-ghost btn-sm" id="nm-cmp-next-group" title="Next group">Group →</button>
+                  <span style="color:var(--c-border);margin:0 4px;">|</span>
+                  <button class="btn btn-ghost btn-sm" id="nm-cmp-prev-sec" title="Previous secondary">←</button>
+                  <span id="nm-cmp-sec-nav" style="font-size:12px;color:var(--c-muted);"></span>
+                  <button class="btn btn-ghost btn-sm" id="nm-cmp-next-sec" title="Next secondary">→</button>
+                  <span style="color:var(--c-border);margin:0 4px;">|</span>
+                  <label style="display:flex;align-items:center;gap:5px;font-size:12px;cursor:pointer;color:var(--c-muted);">
+                    <input type="checkbox" id="nm-split-preview-merge"> Preview post-merge
+                  </label>
+                </div>
+              </div>
+              <button class="ri-close" id="nm-cmp-close">&times;</button>
+            </div>
+
+            <!-- Split body -->
+            <div style="display:grid;grid-template-columns:1fr 1fr;flex:1;overflow:hidden;">
+              <div id="nm-split-left"  style="padding:18px;overflow-y:auto;border-right:1px solid var(--c-border);min-width:0;"></div>
+              <div id="nm-split-right" style="padding:18px;overflow-y:auto;min-width:0;"></div>
+            </div>
+
+          </div>
+        </div><!-- /nm-compare-overlay -->
