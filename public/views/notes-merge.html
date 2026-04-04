@@ -28,7 +28,7 @@
                   <li><strong>Tags</strong> — all unique tags from secondary notes are added to the target. Already-present tags are skipped.</li>
                   <li><strong>Product links</strong> — all product hierarchy links from secondary notes are added to the target. Already-linked entities are skipped.</li>
                   <li><strong>State</strong> — the highest-priority state across the group is applied to the target. Priority order: Processed &gt; Unprocessed &gt; Archived.</li>
-                  <li><strong>Owners → followers</strong> — each secondary note's owner is added as a follower on the target note. The target's owner is not changed.</li>
+                  <li><strong>Owners → followers</strong> — each secondary note's owner is added as a follower on the target note. The target's owner is not changed. When <strong>Transfer followers</strong> is enabled at scan time, existing followers of secondary notes are also added to the target.</li>
                   <li><strong>Customer relationship</strong> — if the target has only a company and a secondary has a specific user from that company, the user relationship is added to the target.</li>
                   <li><strong>Source data</strong> — source origin and record ID from secondary notes are logged in the audit but cannot be transferred. They are shown in the preview table for reference.</li>
                   <li><strong>Deletion</strong> — secondary notes are deleted only after all metadata consolidation steps succeed for that group.</li>
@@ -65,10 +65,10 @@
                   <!-- Date range -->
                   <div class="field">
                     <label>Date range <span class="label-hint">(optional — leave blank to scan all notes)</span></label>
-                    <div class="input-row" style="gap:8px;align-items:center;">
-                      <input type="date" id="nm-date-from" class="form-input" style="width:160px;" />
+                    <div class="input-row" style="gap:8px;align-items:center;flex-wrap:wrap;">
+                      <input type="date" id="nm-date-from" class="form-input" style="width:160px;flex:none;" />
                       <span style="color:var(--c-muted);font-size:13px;">to</span>
-                      <input type="date" id="nm-date-to" class="form-input" style="width:160px;" />
+                      <input type="date" id="nm-date-to" class="form-input" style="width:160px;flex:none;" />
                     </div>
                   </div>
 
@@ -102,6 +102,18 @@
                     </label>
                     <div class="label-hint" style="margin-top:4px;margin-left:20px;">
                       When unchecked (default), title + content + customer must all match exactly.
+                    </div>
+                  </div>
+
+                  <!-- Transfer followers -->
+                  <div class="field">
+                    <label class="checkbox-label">
+                      <input type="checkbox" id="nm-transfer-followers">
+                      Transfer followers
+                      <span class="info-icon" data-tip="Fetches existing followers from each secondary note and adds them to the target during merge. Adds one extra API call per secondary note during scan.">i</span>
+                    </label>
+                    <div class="label-hint" style="margin-top:4px;margin-left:20px;">
+                      When enabled, existing followers of secondary notes are added to the target in addition to their owners. Followers are shown in the compare modal and included in the preview CSV.
                     </div>
                   </div>
 
@@ -148,7 +160,7 @@
                 <div id="nm-groups-wrap">
 
                   <!-- Toolbar -->
-                  <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;">
+                  <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;flex-wrap:wrap;">
                     <button class="btn btn-ghost btn-sm" id="nm-toggle-all-groups">Collapse all</button>
                     <button class="btn btn-ghost btn-sm hidden" id="nm-unselect-all">Unselect all</button>
                     <button class="btn btn-ghost btn-sm hidden" id="nm-invert-selection">Invert selection</button>
@@ -194,7 +206,7 @@
                   </div>
 
                   <!-- Merge action -->
-                  <div style="display:flex;gap:8px;align-items:center;">
+                  <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
                     <button class="btn btn-danger" id="nm-merge-btn">Merge &amp; delete duplicates</button>
                     <button class="btn btn-secondary" id="nm-rescan-btn">Adjust options</button>
                   </div>
@@ -267,6 +279,166 @@
         </div><!-- /view-notes-merge-view -->
 
         <!-- ══════════════════════════════════════════
+             DELETE EMPTY NOTES
+        ═══════════════════════════════════════════ -->
+        <div id="view-notes-merge-empty" class="hidden">
+          <div class="panel">
+            <div class="panel-header">
+              <div class="panel-title">Delete empty notes <span class="badge badge-beta">Beta</span></div>
+              <div class="panel-subtitle">Find and delete notes that have no content body. Optionally scope by creation date.</div>
+            </div>
+            <hr class="panel-divider mt-12" />
+            <div class="panel-body">
+
+              <!-- ════════════════════════════════
+                   IDLE: date range + scan button
+              ════════════════════════════════ -->
+              <div id="ne-idle">
+                <div class="field">
+                  <label>Date range <span class="label-hint">(optional — leave blank to scan all notes)</span></label>
+                  <div class="input-row" style="gap:8px;align-items:center;flex-wrap:wrap;">
+                    <input type="date" id="ne-date-from" class="form-input" style="width:160px;flex:none;" />
+                    <span style="color:var(--c-muted);font-size:13px;">to</span>
+                    <input type="date" id="ne-date-to" class="form-input" style="width:160px;flex:none;" />
+                  </div>
+                </div>
+                <button class="btn btn-primary" id="ne-scan-btn">Find empty notes</button>
+              </div><!-- /ne-idle -->
+
+              <!-- ════════════════════════════════
+                   SCANNING: progress bar
+              ════════════════════════════════ -->
+              <div id="ne-scanning" class="hidden">
+                <div class="progress-wrap">
+                  <div class="progress-bar" id="ne-progress-bar" style="width:0%"></div>
+                </div>
+                <div class="progress-label">
+                  <span id="ne-progress-msg">Starting scan…</span>
+                  <span id="ne-progress-pct" style="margin-left:auto;"></span>
+                </div>
+                <button class="btn btn-danger btn-sm mt-8" id="ne-scan-stop">⏹ Cancel</button>
+              </div><!-- /ne-scanning -->
+
+              <!-- ════════════════════════════════
+                   PREVIEW: note list + delete button
+              ════════════════════════════════ -->
+              <div id="ne-preview" class="hidden">
+
+                <!-- Summary -->
+                <div id="ne-preview-summary" class="alert alert-info" style="margin-bottom:16px;">
+                  <span class="alert-icon">🔍</span>
+                  <span id="ne-preview-summary-text"></span>
+                </div>
+
+                <!-- No empty notes found -->
+                <div id="ne-no-empty" class="hidden">
+                  <div class="alert alert-ok" style="margin-bottom:16px;">
+                    <span class="alert-icon">✅</span>
+                    <span>No empty notes found. Nothing to delete.</span>
+                  </div>
+                  <button class="btn btn-secondary" id="ne-no-empty-rescan">Adjust date range and re-scan</button>
+                </div>
+
+                <!-- Notes list -->
+                <div id="ne-notes-wrap">
+
+                  <!-- Toolbar -->
+                  <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;flex-wrap:wrap;">
+                    <button class="btn btn-ghost btn-sm" id="ne-select-all">Select all</button>
+                    <button class="btn btn-ghost btn-sm hidden" id="ne-unselect-all">Unselect all</button>
+                    <button class="btn btn-ghost btn-sm hidden" id="ne-invert-selection">Invert selection</button>
+                  </div>
+
+                  <!-- Notes table -->
+                  <div style="overflow-x:auto;margin-bottom:16px;">
+                    <table class="mapping-table" id="ne-notes-table">
+                      <thead>
+                        <tr>
+                          <th style="width:32px;"></th>
+                          <th>Title</th>
+                          <th>Customer</th>
+                          <th>Owner</th>
+                          <th>State</th>
+                          <th>Created</th>
+                        </tr>
+                      </thead>
+                      <tbody id="ne-notes-tbody"></tbody>
+                    </table>
+                  </div>
+
+                  <!-- Delete action -->
+                  <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+                    <button class="btn btn-danger" id="ne-delete-btn">Delete empty notes</button>
+                    <button class="btn btn-secondary" id="ne-rescan-btn">Adjust date range</button>
+                  </div>
+
+                </div><!-- /ne-notes-wrap -->
+              </div><!-- /ne-preview -->
+
+              <!-- ════════════════════════════════
+                   RUNNING: live log
+              ════════════════════════════════ -->
+              <div id="ne-running" class="hidden">
+                <div class="progress-wrap">
+                  <div class="progress-bar" id="ne-run-progress-bar" style="width:0%"></div>
+                </div>
+                <div class="progress-label">
+                  <span id="ne-run-progress-msg">Starting…</span>
+                  <span id="ne-run-progress-pct" style="margin-left:auto;"></span>
+                </div>
+
+                <div id="ne-run-log" class="live-log hidden mt-16">
+                  <div class="live-log-header">
+                    <span>Live log</span>
+                    <span id="ne-run-log-counts" class="live-log-counts"></span>
+                  </div>
+                  <div id="ne-run-log-entries" class="live-log-scroll"></div>
+                </div>
+
+                <button class="btn btn-danger btn-sm mt-8" id="ne-run-stop">⏹ Stop</button>
+              </div><!-- /ne-running -->
+
+              <!-- ════════════════════════════════
+                   RESULTS: summary + download
+              ════════════════════════════════ -->
+              <div id="ne-results" class="hidden">
+                <div id="ne-results-summary"></div>
+
+                <div id="ne-results-log" class="live-log hidden mt-16">
+                  <div class="live-log-header">
+                    <span>Log</span>
+                    <span id="ne-results-log-counts" class="live-log-counts"></span>
+                    <button class="btn btn-ghost btn-sm hidden" id="ne-results-download-log" style="margin-left:auto;">↓ Download log</button>
+                  </div>
+                  <div id="ne-results-log-entries" class="live-log-scroll"></div>
+                </div>
+
+                <div style="display:flex;gap:8px;margin-top:16px;flex-wrap:wrap;">
+                  <button class="btn btn-secondary" id="ne-back-to-preview">← Back to preview</button>
+                  <button class="btn btn-ghost btn-sm" id="ne-start-over">Start over</button>
+                </div>
+              </div><!-- /ne-results -->
+
+              <!-- ════════════════════════════════
+                   ERROR
+              ════════════════════════════════ -->
+              <div id="ne-error" class="hidden">
+                <div class="alert alert-danger">
+                  <span class="alert-icon">⚠️</span>
+                  <span id="ne-error-msg"></span>
+                </div>
+                <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap;">
+                  <button class="btn btn-secondary hidden" id="ne-back-to-preview-error">← Back to preview</button>
+                  <button class="btn btn-ghost btn-sm hidden" id="ne-error-download-log">↓ Download log</button>
+                  <button class="btn btn-ghost btn-sm" id="ne-error-retry">Start over</button>
+                </div>
+              </div><!-- /ne-error -->
+
+            </div><!-- /panel-body -->
+          </div><!-- /panel -->
+        </div><!-- /view-notes-merge-empty -->
+
+        <!-- ══════════════════════════════════════════
              NOTE COMPARISON MODAL
         ═══════════════════════════════════════════ -->
         <div id="nm-compare-overlay" class="ri-overlay hidden">
@@ -276,15 +448,15 @@
             <div class="ri-header" style="flex-shrink:0;align-items:flex-start;">
               <div style="display:flex;flex-direction:column;gap:6px;min-width:0;flex:1;">
                 <!-- Group row: green left-border accent -->
-                <div style="display:flex;align-items:center;gap:6px;border-left:3px solid var(--c-ok,#22c55e);padding-left:8px;">
+                <div class="nm-cmp-group-row" style="border-left:3px solid var(--c-ok,#22c55e);padding-left:8px;">
                   <span style="font-size:10px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--c-ok,#22c55e);white-space:nowrap;">Group</span>
                   <button class="btn btn-ghost btn-sm" id="nm-cmp-prev-group" title="Previous group">←</button>
                   <span id="nm-cmp-group-nav" style="font-size:12px;color:var(--c-muted);"></span>
                   <button class="btn btn-ghost btn-sm" id="nm-cmp-next-group" title="Next group">→</button>
-                  <span id="nm-cmp-group-label" style="font-size:13px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:500px;"></span>
+                  <span id="nm-cmp-group-label" class="nm-cmp-group-label"></span>
                 </div>
                 <!-- Duplicates row -->
-                <div style="display:flex;align-items:center;gap:6px;padding-left:11px;">
+                <div class="nm-cmp-controls-row">
                   <label style="display:flex;align-items:center;gap:5px;font-size:12px;cursor:pointer;color:var(--c-muted);">
                     <input type="checkbox" id="nm-split-preview-merge" checked> Preview post-merge state
                   </label>
@@ -292,7 +464,7 @@
                   <label style="display:flex;align-items:center;gap:5px;font-size:12px;cursor:pointer;color:var(--c-muted);">
                     <input type="checkbox" id="nm-cmp-group-select"> Select group for merge
                   </label>
-                  <span style="margin-left:auto;display:flex;align-items:center;gap:6px;">
+                  <span class="nm-cmp-nav-controls">
                     <span style="font-size:10px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--c-muted);white-space:nowrap;">Duplicates</span>
                     <button class="btn btn-ghost btn-sm" id="nm-cmp-prev-sec" title="Previous duplicate">←</button>
                     <span id="nm-cmp-sec-nav" style="font-size:12px;color:var(--c-muted);"></span>
@@ -304,9 +476,9 @@
             </div>
 
             <!-- Split body -->
-            <div style="display:grid;grid-template-columns:1fr 1fr;flex:1;overflow:hidden;">
-              <div id="nm-split-left"  style="padding:18px;overflow-y:auto;border-right:1px solid var(--c-border);min-width:0;"></div>
-              <div id="nm-split-right" style="padding:18px;overflow-y:auto;min-width:0;"></div>
+            <div class="nm-split-body">
+              <div id="nm-split-left"></div>
+              <div id="nm-split-right"></div>
             </div>
 
           </div>
