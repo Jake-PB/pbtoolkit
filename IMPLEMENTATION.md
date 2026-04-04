@@ -44,7 +44,7 @@ pbtoolkit/
 │   │   ├── constants.js       # shared constants: UUID_RE
 │   │   ├── errorUtils.js      # shared helpers: parseApiError()
 │   │   ├── fieldFormat.js     # shared custom-field formatting for v2 entity imports
-│   │   └── domainCache.js     # shared company domain cache (workspace-specific UUID key discovery)
+│   │   └── domainCache.js     # shared company domain cache (domain→id and id→domain lookups)
 │   ├── middleware/
 │   │   └── pbAuth.js          # token validation + pbClient injection
 │   └── routes/
@@ -58,7 +58,8 @@ pbtoolkit/
 │       ├── membersTeamsMgmt.js # GET /api/members-teams-mgmt/load + PATCH/POST/DELETE team & member ops (live editor)
 │       ├── users.js           # GET/POST /api/users/* (export, import/preview, import/run, delete)
 │       ├── validate.js        # GET /api/validate (token validation)
-│       └── feedback.js        # POST /api/feedback (bug report → PB note or Brevo email fallback)
+│       ├── feedback.js        # POST /api/feedback (bug report → PB note or Brevo email fallback)
+│       └── notesMerge.js      # POST /api/notes-merge/scan + /run + /scan-empty + /delete-empty (SSE)
 ├── src/services/
 │   ├── teamCache.js           # shared team+member session cache (used by teamMembership + membersTeamsMgmt)
 │   └── entities/
@@ -83,6 +84,7 @@ pbtoolkit/
 │   ├── teams-crud-app.js      # Teams CRUD module frontend JS
 │   ├── members-teams-mgmt-app.js # Live team editor frontend JS
 │   ├── users-app.js           # Users module frontend JS
+│   ├── notes-merge-app.js     # Merge Duplicate Notes module frontend JS
 │   ├── views/                 # HTML partials, one per module (lazy-loaded into #view-area)
 │   │   ├── companies.html
 │   │   ├── notes.html
@@ -91,6 +93,7 @@ pbtoolkit/
 │   │   ├── team-membership.html
 │   │   ├── teams-crud.html
 │   │   ├── members-teams-mgmt.html
+│   │   ├── notes-merge.html
 │   │   └── users.html
 │   ├── csv-utils.js           # Frontend CSV utilities (papaparse wrappers for browser)
 │   └── style.css              # CSS custom properties design system
@@ -616,7 +619,7 @@ pb-member-activity_2026-03-01_2026-03-14_role-maker_team-frontend.csv
 
 - **v2 POST uses a `data` wrapper** — `POST /v2/entities` sends `{ data: { type: 'company', fields, metadata? } }`. The v1 `/companies` endpoint did not need the wrapper, but v2 does. Verify body shape for each new resource type.
 
-- **v2 list/search returns domain under a UUID key, single GET normalises to `"domain"`** — `GET /v2/entities?type[]=company` returns domain in `fields[<workspace-UUID>]`; `GET /v2/entities/{id}` returns it in `fields.domain`. This discrepancy is a PB bug. `buildDomainCache` in `companies.js` does a UUID discovery GET to work around it — see the "Domain cache" section above.
+- ~~**v2 list/search returns domain under a UUID key, single GET normalises to `"domain"`**~~ — **Resolved (2026-04-03)**: PB fixed the API. `GET /v2/entities?type[]=company` now returns domain under the standard `"domain"` key. The UUID discovery loop was removed from `domainCache.js`.
 
 - **V1 and v2 company lists are separate** — `GET /companies` (v1) only returns companies that were originally created via v1. Companies created via `POST /v2/entities` (including all PBToolkit-imported companies) do not appear in v1 and can only be retrieved via `GET /v2/entities?type[]=company`.
 
@@ -660,15 +663,7 @@ Builds a `{ 'domain.com' → companyUUID }` map before import runs, used for ste
 
 **Why v2 list, not v1:** Companies created via `POST /v2/entities` (PBToolkit import) do NOT appear in v1 `GET /companies` — v1 and v2 have separate company lists. A v1-only cache misses all PBToolkit-imported companies.
 
-**Known PB quirk — UUID domain field key:** `GET /v2/entities?type[]=company` returns domain under a workspace-specific UUID key (e.g. `b37b798e-e827-4b91-8faa-0b298189cdbe`), not the string `"domain"`. `GET /v2/entities/{id}` (single-entity GET) always normalises it to `fields.domain`. The UUID is not in the config endpoint response and varies per workspace.
-
-**Workaround (current implementation):**
-1. Fetch all companies via `GET /v2/entities?type[]=company` (cursor-paginated via `fetchAllPages`)
-2. Pick the first company that has a domain value; call `GET /v2/entities/{id}` on it to get its `fields.domain` value
-3. Cross-reference that value against the UUID-keyed fields in the list entity to identify the workspace-specific domain field key
-4. Use that key to read domains from all remaining list entities
-
-> **TODO**: once PB fixes the domain field key inconsistency in list/search responses (so `"domain"` string key is returned consistently), remove the individual GET discovery loop and read domain directly from `entity.fields.domain` in the list response.
+**Resolved (2026-04-03):** PB fixed the API — `domain` is now a standard string key in `GET /v2/entities?type[]=company` list responses. The UUID discovery loop and individual GET calls were removed from `domainCache.js`. Domain is now read directly from `entity.fields.domain` in list responses.
 
 Mapping shape:
 ```js
@@ -755,6 +750,29 @@ All Notes routes live in `src/routes/notes.js`.
 - simple notes: `fields.content` is a plain string
 - conversation notes: `fields.content` is an array of message objects → **JSON.stringify** in CSV
 - On import: if content column is a JSON string starting with `[`, it is sent as-is to v1 (v1 accepts JSON string for conversation content)
+
+---
+
+## Notes Merge module — API reference
+
+Routes in `src/routes/notesMerge.js`. Frontend JS in `public/notes-merge-app.js`.
+
+### Endpoint table
+
+| Route | Method | Type | Description |
+|---|---|---|---|
+| `/api/notes-merge/scan` | POST | SSE | Scan all notes for duplicates; returns groups + stats |
+| `/api/notes-merge/run` | POST | SSE | Merge selected duplicate groups; returns audit log |
+| `/api/notes-merge/scan-empty` | POST | SSE | Find notes with no content; returns list + stats |
+| `/api/notes-merge/delete-empty` | POST | SSE | Delete a list of empty notes by UUID |
+
+### Key implementation notes
+
+- **Matching key**: `title\x00content\x00customerId` (exact match) or `\x00content\x00customerId` (loose match). Notes with no content or no customer relationship are excluded.
+- **Groups of 100+**: flagged in `stats.oversizedGroups`, not auto-merged.
+- **v1 follower endpoints**: both `POST /notes/{id}/user-followers` (add follower) and `GET /notes/{id}/user-followers` (fetch existing followers) are v1 APIs with no v2 equivalent yet. Needs revisiting when v1 is retired (~2026-10). See TODO comments in `notesMerge.js`.
+- **State priority**: `processed(0) > unprocessed(1) > archived(2)` — mirrored as `NM_STATE_PRIORITY` in `notes-merge-app.js` (intentional duplication; no shared import between server and browser).
+- **Audit log**: each `/run` response includes a `runId` + `auditLog` array with per-group details (tags added, links added, followers added, notes deleted, errors).
 
 ---
 

@@ -80,6 +80,7 @@ To disconnect, click **Disconnect** in the top-right corner. This clears the ses
 |---|---|---|
 | Companies | ✅ Live | Export and import companies with custom fields |
 | Notes | ✅ Live | Export, import, delete, and migration-prep for notes |
+| Merge Duplicate Notes | ✅ Live | Scan for duplicate notes, preview groups, merge into one, and find/delete empty notes |
 | Entities | 🔄 Polish | Templates, export, and import for all entity types (QA in progress) |
 | Member Activity | ✅ Live | Export member activity and license utilization data |
 | Team Membership | ✅ Live | Export and bulk-import team assignments via CSV diff preview |
@@ -167,6 +168,51 @@ Deletes **all** notes in the workspace. Requires typing `DELETE` to confirm. Irr
 ### Migration prep
 
 A pure client-side CSV transform — no API calls. Converts an exported notes CSV into a migration-ready format: copies `pb_id` to `ext_id` (source record ID), sets a `source_origin`, and clears `pb_id` so the import creates new notes rather than patching existing ones.
+
+---
+
+## Merge Duplicate Notes
+
+A standalone module for deduplicating notes and cleaning up empty notes. Two tabs: **Merge Duplicates** and **Find Empty Notes**.
+
+### Merge Duplicates
+
+A two-step flow: **Scan → Preview → Run**.
+
+**Scan options:**
+
+| Option | Description |
+|---|---|
+| Date range | Limit scan to notes created within a date range (optional; leave blank to scan all notes) |
+| Loose match | Match on content + customer only, ignoring title differences |
+| Target selection | Which note to keep: newest (default), oldest, or most metadata (most tags + product links) |
+| Transfer followers | Also transfer existing followers from secondary notes (costs one extra API call per secondary note during scan) |
+
+**Matching logic:** Notes are grouped by `title + content + customer entity`. Notes with no content or no customer relationship are excluded. Groups of 100+ notes are flagged but not auto-merged.
+
+**Partial matches** (only shown in exact-match mode): notes that share content + customer but differ in title — surfaced for review, not merged.
+
+**Compare modal:** Click any duplicate group to compare the target and each secondary side-by-side (title, content preview, owner, tags, state, followers, etc.) and optionally swap the target.
+
+**Group selection:** Check/uncheck groups before running. Merge all or a subset.
+
+**Merge steps per group (in order):**
+1. Validate target still exists
+2. Merge tags from secondaries (idempotent `addItems`)
+3. Merge product hierarchy links (POST relationships, 422 = already linked → skip)
+4. Reconcile state (processed > unprocessed > archived — highest priority wins)
+5. Add secondary owners as followers (v1 endpoint)
+6. Transfer existing followers from secondaries (only when Transfer followers is enabled)
+7. Preserve user customer relationship if target has company-only and a secondary has a user
+8. Delete secondary notes
+
+A **Stop** button is available during run. An **audit log** (downloadable) captures every operation per group.
+
+> **Note:** Steps 5 and 6 use the v1 `/notes/{id}/user-followers` endpoints. These will need updating when Productboard retires v1 (~6 months from 2026-04-03). See comments in `src/routes/notesMerge.js`.
+
+### Find Empty Notes
+
+Scans for notes with no content. Same date-range filter as Merge Duplicates. Presents a list with owner, customer, state, and created date. Select all or individual notes to delete.
 
 ---
 
