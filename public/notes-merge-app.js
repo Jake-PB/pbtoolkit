@@ -8,11 +8,13 @@
 
   // ── Module state ─────────────────────────────────────────
   let _scanData    = null;  // { groups, partialMatchGroups, stats } from last scan
+  let _looseMatch  = false; // whether loose match was enabled for the last scan
   let _auditLog    = null;  // audit log from last run
   let _scanCtrl    = null;  // AbortController for scan SSE
   let _runCtrl     = null;  // AbortController for run SSE
   let _logAppender = null;  // makeLogAppender bound to run log panel
   let _inited      = false;
+  let _groupCardEls = new Map(); // group → <details> el, for in-place re-render after target swap
 
   // ── DOM helpers ───────────────────────────────────────────
   function nm$(id) { return document.getElementById(id); }
@@ -59,6 +61,7 @@
     const createdTo   = nm$('nm-date-to')?.value   ? nm$('nm-date-to').value   + 'T23:59:59.999Z' : '';
     const looseMatch  = nm$('nm-loose-match')?.checked || false;
     const targetMode  = document.querySelector('input[name="nm-target-mode"]:checked')?.value || 'newest';
+    _looseMatch = looseMatch;
 
     nmGo('scanning');
     setProgress('nm', 'Starting scan…', 0);
@@ -126,6 +129,7 @@
     const listEl = nm$('nm-groups-list');
     if (listEl) {
       listEl.innerHTML = '';
+      _groupCardEls.clear();
       groups.forEach((group, gi) => {
         listEl.appendChild(buildGroupBlock(group, gi));
       });
@@ -135,6 +139,9 @@
     if (partialMatchGroups.length > 0) {
       nmShow('nm-partial-matches-wrap');
       nmText('nm-partial-count', String(partialMatchGroups.length));
+      // Show loose-match hint only when loose match was not enabled for this scan
+      if (_looseMatch) nmHide('nm-partial-loose-hint');
+      else             nmShow('nm-partial-loose-hint');
       const ptbody = nm$('nm-partial-tbody');
       if (ptbody) {
         ptbody.innerHTML = '';
@@ -160,33 +167,46 @@
 
   /** Build a collapsible <details> block for one duplicate group. */
   function buildGroupBlock(group, gi) {
+    // Preserve original note order across target swaps
+    if (!group.allNotes) group.allNotes = [group.target, ...group.secondaries];
     const { target, secondaries } = group;
-    const total = 1 + secondaries.length;
+    const total = group.allNotes.length;
 
     const details = document.createElement('details');
     details.open = true;
+    details.dataset.gi = gi;
     details.style.cssText = 'border:1px solid var(--c-border,#e2e8f0);border-radius:6px;margin-bottom:8px;overflow:hidden;';
+    _groupCardEls.set(group, details);
 
     // Summary / header
     const summary = document.createElement('summary');
     summary.style.cssText = [
       'cursor:pointer;list-style:none;padding:10px 14px;',
-      'display:flex;align-items:center;gap:10px;',
+      'display:flex;align-items:center;gap:10px;min-width:0;',
       'background:var(--c-bg-alt,#f8f9fa);font-size:13px;font-weight:500;user-select:none;',
     ].join('');
 
     const groupLabel = document.createElement('span');
+    groupLabel.style.cssText = 'white-space:nowrap;';
     groupLabel.textContent = `Group ${gi + 1}`;
 
     const countLabel = document.createElement('span');
-    countLabel.style.cssText = 'color:var(--c-muted);font-weight:400;';
+    countLabel.style.cssText = 'color:var(--c-muted);font-weight:400;white-space:nowrap;';
     countLabel.textContent = `${total} note${total > 1 ? 's' : ''} · ${secondaries.length} to delete`;
+
+    const titleLabel = document.createElement('span');
+    titleLabel.style.cssText = 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;font-weight:400;';
+    titleLabel.textContent = target.title || '(untitled)';
+
+    const customerLabel = document.createElement('span');
+    customerLabel.style.cssText = 'color:var(--c-muted);font-weight:400;font-size:12px;white-space:nowrap;';
+    customerLabel.textContent = target.customer_email || target.customer_company || '';
 
     const spacer = document.createElement('span');
     spacer.style.flex = '1';
 
     const compareHint = document.createElement('span');
-    compareHint.style.cssText = 'font-size:11px;color:var(--c-muted);font-weight:400;';
+    compareHint.style.cssText = 'font-size:11px;color:var(--c-muted);font-weight:400;white-space:nowrap;';
     compareHint.textContent = 'click a row to compare';
 
     const mergeOneBtn = document.createElement('button');
@@ -197,7 +217,7 @@
       runSingleGroupMerge(group, gi + 1);
     });
 
-    summary.append(groupLabel, countLabel, spacer, compareHint, mergeOneBtn);
+    summary.append(groupLabel, countLabel, titleLabel, customerLabel, spacer, compareHint, mergeOneBtn);
     details.appendChild(summary);
 
     // Compact table
@@ -210,47 +230,90 @@
           <th style="width:80px;">Role</th>
           <th>Title</th>
           <th>Customer</th>
+          <th>Owner</th>
           <th>State</th>
           <th>Created</th>
+          <th style="width:110px;"></th>
         </tr>
       </thead>
     `;
     const tbody = document.createElement('tbody');
 
-    function addRow(note, isTarget, secIndex) {
+    group.allNotes.forEach((note) => {
+      const isTarget = note === group.target;
+      const secIndex = isTarget ? 0 : group.secondaries.indexOf(note);
+
       const tr = document.createElement('tr');
-      tr.style.cssText = 'cursor:pointer;';
+      tr.style.cssText = 'cursor:pointer;height:38px;';
       tr.title = 'Click to compare';
 
       const roleBadge = isTarget
-        ? '<span class="badge badge-ok"  style="font-size:10px;">Target</span>'
+        ? '<span class="badge badge-ok" style="font-size:10px;">Target</span>'
         : '<span class="badge badge-danger" style="font-size:10px;">Delete</span>';
 
       tr.innerHTML = `
         <td>${roleBadge}</td>
-        <td style="max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;${isTarget ? 'font-weight:600;' : ''}"
+        <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;${isTarget ? 'font-weight:600;' : ''}"
             title="${esc(note.title)}">${esc(note.title) || '<em style="color:var(--c-muted)">untitled</em>'}</td>
         <td style="font-size:12px;">${esc(note.customer_email || note.customer_company || '—')}</td>
+        <td style="font-size:12px;">${esc(note.owner_email || '—')}</td>
         <td style="font-size:12px;">${esc(note.state)}</td>
         <td style="font-size:11px;color:var(--c-muted);">${esc(note.created_at ? note.created_at.slice(0, 10) : '—')}</td>
+        <td></td>
       `;
+
+      if (!isTarget) {
+        const actionCell = tr.lastElementChild;
+        const makeTargetBtn = document.createElement('button');
+        makeTargetBtn.className = 'btn btn-ghost btn-sm';
+        makeTargetBtn.textContent = 'Set as target';
+        makeTargetBtn.title = 'Set this note as the merge target — others in the group will be deleted';
+        makeTargetBtn.style.cssText = 'font-size:11px;white-space:nowrap;';
+        makeTargetBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          swapTarget(group, note);
+        });
+        actionCell.appendChild(makeTargetBtn);
+      }
 
       tr.addEventListener('click', () => {
         openSplitView(group, isTarget ? 0 : secIndex);
       });
 
-      // Hover highlight
       tr.addEventListener('mouseenter', () => { tr.style.background = 'var(--c-bg-hover,#f1f5f9)'; });
       tr.addEventListener('mouseleave', () => { tr.style.background = ''; });
 
       tbody.appendChild(tr);
-    }
-
-    addRow(target, true, 0);
-    secondaries.forEach((s, si) => addRow(s, false, si));
+    });
     table.appendChild(tbody);
     details.appendChild(table);
     return details;
+  }
+
+  // ── Target swap ────────────────────────────────────────────
+  function swapTarget(group, newTargetNote) {
+    if (newTargetNote === group.target) return;
+    const oldTarget = group.target;
+    group.target = newTargetNote;
+    // Rebuild secondaries: all allNotes except the new target
+    group.secondaries = group.allNotes.filter(n => n !== newTargetNote);
+    rerenderGroupCard(group);
+    if (_splitGroup === group) {
+      // Keep showing same note in right panel if still a secondary, else reset
+      const stillSec = group.secondaries.indexOf(oldTarget);
+      _splitSecIndex = stillSec !== -1 ? stillSec : 0;
+      renderSplitPanel();
+    }
+  }
+
+  function rerenderGroupCard(group) {
+    const oldEl = _groupCardEls.get(group);
+    if (!oldEl) return;
+    const wasOpen = oldEl.open;
+    const gi = parseInt(oldEl.dataset.gi, 10);
+    const newEl = buildGroupBlock(group, gi);
+    newEl.open = wasOpen;
+    oldEl.replaceWith(newEl);
   }
 
   // ── Compare modal ──────────────────────────────────────────
@@ -273,9 +336,9 @@
     const showMerged  = nm$('nm-split-preview-merge')?.checked || false;
 
     // Header labels
-    nmText('nm-cmp-group-label', `Group ${_splitGroupIndex + 1} of ${totalGroups} — ${target.title || '(untitled)'}`);
+    nmText('nm-cmp-group-label', target.title || '(untitled)');
     nmText('nm-cmp-group-nav',   `${_splitGroupIndex + 1} / ${totalGroups}`);
-    nmText('nm-cmp-sec-nav',     `secondary ${_splitSecIndex + 1} / ${totalSec}`);
+    nmText('nm-cmp-sec-nav',     `${_splitSecIndex + 1} / ${totalSec}`);
 
     // Group nav buttons
     const prevGrpBtn = nm$('nm-cmp-prev-group');
@@ -295,7 +358,22 @@
     if (leftEl)  leftEl.innerHTML  = showMerged
       ? renderNoteCardMerged(_splitGroup)
       : renderNoteCard(target, 'TARGET — kept', false, null);
-    if (rightEl) rightEl.innerHTML = renderNoteCard(sec, `SECONDARY ${_splitSecIndex + 1} — deleted`, true, target);
+    if (rightEl) {
+      rightEl.innerHTML = renderNoteCard(sec, `DUPLICATE ${_splitSecIndex + 1} — will be deleted`, true, target);
+      const makeTargetBtn = document.createElement('button');
+      makeTargetBtn.className = 'btn btn-secondary';
+      makeTargetBtn.textContent = 'Set as target';
+      makeTargetBtn.style.cssText = 'flex-shrink:0;font-size:10px;padding:2px 7px;line-height:1.4;';
+      makeTargetBtn.addEventListener('click', () => swapTarget(_splitGroup, sec));
+      // Inject into the label row (first element child) so it sits top-right
+      const labelEl = rightEl.firstElementChild;
+      if (labelEl) {
+        labelEl.style.cssText += 'display:flex;align-items:center;justify-content:space-between;gap:8px;';
+        labelEl.appendChild(makeTargetBtn);
+      } else {
+        rightEl.prepend(makeTargetBtn);
+      }
+    }
   }
 
   function closeCompareModal() {
@@ -391,7 +469,7 @@
       ${row('Owner',     esc(target.owner_email || '—'))}
       ${row('Tags',      tagsHtml)}
       ${row('Links',     linksHtml)}
-      ${row('Source',    esc(target.source_origin || '—'))}
+      ${row('Source',    [target.source_origin, target.source_record_id].filter(Boolean).map(esc).join(' · ') || '—')}
       ${row('State',     stateHtml)}
       ${row('Created',   esc(target.created_at ? target.created_at.slice(0, 10) : '—'))}
       ${row('Followers', followersHtml)}
