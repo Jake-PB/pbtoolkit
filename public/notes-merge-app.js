@@ -17,6 +17,21 @@
   let _groupCardEls    = new Map(); // group → <details> el, for in-place re-render after target swap
   let _selectedGroups  = new Set(); // groups with checkbox checked
   let _lastMergedGroups = [];       // groups sent in the last runMerge call, used by "Back to preview"
+  let _splitGroup      = null;      // group currently open in the compare modal
+  let _splitGroupIndex = 0;         // index of _splitGroup within _scanData.groups
+  let _splitSecIndex   = 0;         // index of the secondary note being compared
+
+  // ── Module constants ──────────────────────────────────────
+  // Mirrors STATE_PRIORITY in notesMerge.js — duplicated intentionally (no shared import between server and browser).
+  const NM_STATE_PRIORITY = { processed: 0, unprocessed: 1, archived: 2 };
+
+  // ── Shared render helpers ─────────────────────────────────
+  function nmRow(label, value) {
+    return `<div style="display:flex;gap:8px;padding:5px 0;border-bottom:1px solid var(--c-border,#e2e8f0);font-size:12px;">
+      <span style="width:76px;flex-shrink:0;color:var(--c-muted);font-weight:500;">${label}</span>
+      <span style="min-width:0;word-break:break-word;">${value}</span>
+    </div>`;
+  }
 
   // ── DOM helpers ───────────────────────────────────────────
   function nm$(id) { return document.getElementById(id); }
@@ -87,11 +102,6 @@
       },
     });
   }
-
-  // ── Compare modal state ───────────────────────────────────
-  let _splitGroup      = null;
-  let _splitGroupIndex = 0;
-  let _splitSecIndex   = 0;
 
   // ── Render preview ────────────────────────────────────────
   function renderPreview(data) {
@@ -436,8 +446,6 @@
    *  Items that will be added are highlighted in purple. */
   function renderNoteCardMerged(group) {
     const { target, secondaries } = group;
-    const STATE_PRI = { processed: 0, unprocessed: 1, archived: 2 };
-
     // Tags: existing stay, new ones from secondaries shown in purple
     const existingTags = new Set(target.tags || []);
     const newTags = [...new Set(secondaries.flatMap(s => s.tags || []))].filter(t => !existingTags.has(t));
@@ -448,7 +456,7 @@
 
     // State reconciliation
     const allStates   = [target, ...secondaries].map(n => n.state || 'unprocessed');
-    const mergedState = allStates.reduce((best, s) => (STATE_PRI[s] ?? 99) < (STATE_PRI[best] ?? 99) ? s : best);
+    const mergedState = allStates.reduce((best, s) => (NM_STATE_PRIORITY[s] ?? 99) < (NM_STATE_PRIORITY[best] ?? 99) ? s : best);
     const stateChanged = mergedState !== (target.state || 'unprocessed');
 
     // Followers: secondary owners that aren't already the target owner
@@ -486,27 +494,20 @@
       ? newFollowers.map(e => purple(esc(e))).join(', ')
       : '<span style="color:var(--c-muted)">none</span>';
 
-    function row(label, value) {
-      return `<div style="display:flex;gap:8px;padding:5px 0;border-bottom:1px solid var(--c-border,#e2e8f0);font-size:12px;">
-        <span style="width:76px;flex-shrink:0;color:var(--c-muted);font-weight:500;">${label}</span>
-        <span style="min-width:0;word-break:break-word;">${value}</span>
-      </div>`;
-    }
-
     return `
       <div style="font-size:10px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--c-ok,#22c55e);margin-bottom:6px;">TARGET — POST-MERGE PREVIEW</div>
       <div style="font-size:11px;color:#7c3aed;margin-bottom:10px;">Items in purple will be added during merge.</div>
       <div style="font-size:14px;font-weight:600;margin-bottom:12px;line-height:1.3;">${esc(target.title || '(untitled)')}</div>
       <div style="font-size:11px;color:var(--c-muted);margin-bottom:4px;font-weight:500;">Content preview</div>
       <div style="font-size:12px;background:var(--c-bg-alt,#f8f9fa);border:1px solid var(--c-border,#e2e8f0);border-radius:4px;padding:8px;max-height:100px;overflow-y:auto;white-space:pre-wrap;word-break:break-word;margin-bottom:12px;line-height:1.5;">${esc(target.content_preview || '—')}${target.content_preview?.length >= 100 ? '<span style="color:var(--c-muted)">…</span>' : ''}</div>
-      ${row('Customer',  customerHtml)}
-      ${row('Owner',     esc(target.owner_email || '—'))}
-      ${row('Tags',      tagsHtml)}
-      ${row('Links',     linksHtml)}
-      ${row('Source',    [target.source_origin, target.source_record_id].filter(Boolean).map(esc).join(' · ') || '—')}
-      ${row('State',     stateHtml)}
-      ${row('Created',   esc(target.created_at ? target.created_at.slice(0, 10) : '—'))}
-      ${row('Followers', followersHtml)}
+      ${nmRow('Customer',  customerHtml)}
+      ${nmRow('Owner',     esc(target.owner_email || '—'))}
+      ${nmRow('Tags',      tagsHtml)}
+      ${nmRow('Links',     linksHtml)}
+      ${nmRow('Source',    [target.source_origin, target.source_record_id].filter(Boolean).map(esc).join(' · ') || '—')}
+      ${nmRow('State',     stateHtml)}
+      ${nmRow('Created',   esc(target.created_at ? target.created_at.slice(0, 10) : '—'))}
+      ${nmRow('Followers', followersHtml)}
     `;
   }
 
@@ -522,13 +523,6 @@
       `<span style="color:var(--c-danger,#ef4444);" title="${esc(reason)}">${html} <span style="font-size:10px;">✕ lost</span></span>`;
     const muted = (html) =>
       `<span style="color:var(--c-muted);">${html}</span>`;
-
-    function row(fieldLabel, value) {
-      return `<div style="display:flex;gap:8px;padding:5px 0;border-bottom:1px solid var(--c-border,#e2e8f0);font-size:12px;">
-        <span style="width:76px;flex-shrink:0;color:var(--c-muted);font-weight:500;">${fieldLabel}</span>
-        <span style="min-width:0;word-break:break-word;">${value}</span>
-      </div>`;
-    }
 
     // ── Field values ──────────────────────────────────────────
     const customer = note.customer_email || note.customer_company || '—';
@@ -610,13 +604,13 @@
       ${titleHtml}
       <div style="font-size:11px;color:var(--c-muted);margin-bottom:4px;font-weight:500;">Content${isSecondary ? ' (same as target)' : ' preview'}</div>
       <div style="${contentStyle}">${esc(note.content_preview || '—')}${note.content_preview?.length >= 100 ? '<span style="color:var(--c-muted)">…</span>' : ''}</div>
-      ${row('Customer', esc(customer))}
-      ${row('Owner',    ownerHtml)}
-      ${row('Tags',     tagsHtml)}
-      ${row('Links',    linksHtml)}
-      ${row('Source',   sourceHtml)}
-      ${row('State',    esc(note.state))}
-      ${row('Created',  esc(note.created_at ? note.created_at.slice(0, 10) : '—'))}
+      ${nmRow('Customer', esc(customer))}
+      ${nmRow('Owner',    ownerHtml)}
+      ${nmRow('Tags',     tagsHtml)}
+      ${nmRow('Links',    linksHtml)}
+      ${nmRow('Source',   sourceHtml)}
+      ${nmRow('State',    esc(note.state))}
+      ${nmRow('Created',  esc(note.created_at ? note.created_at.slice(0, 10) : '—'))}
     `;
   }
 
@@ -639,6 +633,8 @@
       });
     });
 
+    // Local csvCell — csv-utils.js only exposes parse helpers, not a CSV generator.
+    // If a second module ever needs custom CSV generation, extract this to csv-utils.js.
     function csvCell(v) {
       const s = v == null ? '' : String(v);
       return (s.includes(',') || s.includes('"') || s.includes('\n'))
@@ -707,7 +703,7 @@
           nmShow('nm-error-download-log');
         }
         // Show "Back to preview" only when a partial preview exists to return to
-        const canGoBack = _scanData && _lastMergedGroups.length < (_scanData.groups.length + _lastMergedGroups.length);
+        const canGoBack = _scanData && _lastMergedGroups.length < _scanData.groups.length;
         if (canGoBack) nmShow('nm-back-to-preview-error');
         else           nmHide('nm-back-to-preview-error');
         nmGo('error');
@@ -788,7 +784,7 @@
     }
 
     // Show "Back to preview" only when there's a partial preview to return to
-    const canGoBack = _scanData && _lastMergedGroups.length < (_scanData.groups.length + _lastMergedGroups.length);
+    const canGoBack = _scanData && _lastMergedGroups.length < _scanData.groups.length;
     if (canGoBack) nmShow('nm-back-to-preview');
     else           nmHide('nm-back-to-preview');
   }
@@ -796,6 +792,10 @@
   /**
    * Move live log entries from the running panel to the results panel.
    * The running-panel log div is cloned so the original is untouched.
+   *
+   * This is a novel pattern — no sibling module carries the live log into a results state.
+   * If another module adopts a "running → results with live log carried over" UX, promote
+   * this to a shared helper in app.js rather than duplicating it.
    */
   function transferLog(srcLogId, srcEntriesId, srcCountsId, dstLogId, dstEntriesId, dstCountsId) {
     const srcLog     = nm$(srcLogId);
@@ -944,6 +944,7 @@
       if (_logAppender) downloadLogCsv(_logAppender, 'notes-merge');
     });
 
+    // No pb:connected handler needed — scan is always user-initiated.
     // Token disconnect — reset everything
     window.addEventListener('pb:disconnect', resetNotesMerge);
   }
