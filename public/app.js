@@ -449,6 +449,26 @@ async function boot() {
 $('btn-home').addEventListener('click', () => navigateTo(null));
 $('btn-back-home').addEventListener('click', () => navigateTo(null));
 
+// ── Sidebar collapse toggle ─────────────────────────────────
+(function () {
+  const STORAGE_KEY = 'sidebar-collapsed';
+  const mainContent = document.querySelector('.main-content');
+  const btn         = $('sidebar-collapse-toggle');
+  if (!mainContent || !btn) return;
+
+  // Restore saved state
+  if (localStorage.getItem(STORAGE_KEY) === 'true') {
+    mainContent.classList.add('sidebar-collapsed');
+    btn.title = 'Expand sidebar';
+  }
+
+  btn.addEventListener('click', () => {
+    const collapsed = mainContent.classList.toggle('sidebar-collapsed');
+    localStorage.setItem(STORAGE_KEY, String(collapsed));
+    btn.title = collapsed ? 'Expand sidebar' : 'Collapse sidebar';
+  });
+})();
+
 // ── DC toggle ──────────────────────────────────────────────
 $('dc-us').addEventListener('click', () => switchDatacenter(false));
 $('dc-eu').addEventListener('click', () => switchDatacenter(true));
