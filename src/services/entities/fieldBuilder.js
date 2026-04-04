@@ -155,14 +155,16 @@ function buildFieldsObject(normalizedRow, entityType, config, options, op) {
   // --- owner ---
   const ownerVal = normalizedRow['owner'] || '';
   if (!skip(ownerVal) && ownerVal) {
-    if (!EMAIL_RE.test(ownerVal)) {
+    const ownerMatch = ownerVal.match(EMAIL_RE);
+    if (!ownerMatch) {
       // Invalid email format — skip silently (logged as warning by caller if needed)
     } else {
+      const ownerEmail = ownerMatch[1];
       // If skipInvalidOwner is enabled and the email isn't in the workspace members set, skip it
       const skipOwner = options?.skipInvalidOwner && options?._memberEmails instanceof Set
-        && !options._memberEmails.has(ownerVal.toLowerCase());
+        && !options._memberEmails.has(ownerEmail.toLowerCase());
       if (!skipOwner) {
-        F.owner = { email: ownerVal };
+        F.owner = { email: ownerEmail };
       }
     }
   }

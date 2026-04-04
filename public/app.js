@@ -275,7 +275,7 @@ function createViewState(prefix, states) {
 // ── Routing ─────────────────────────────────────────────────
 const VALID_TOOLS = new Set([
   'entities', 'notes', 'companies',
-  'member-activity', 'teams',
+  'member-activity', 'teams', 'notes-merge',
 ]);
 
 const PAGE_META = {
@@ -302,6 +302,7 @@ const DEFAULT_VIEWS = {
   entities:          'entities-templates',
   'member-activity': 'member-activity-export',
   teams:             'members-teams-mgmt-manage',
+  'notes-merge':     'notes-merge-view',
 };
 
 const TOOL_VIEWS = {
@@ -314,6 +315,7 @@ const TOOL_VIEWS = {
     'team-membership-export', 'team-membership-import',
     'members-teams-mgmt-manage',
   ],
+  'notes-merge': ['notes-merge-view'],
 };
 
 let _currentTool = null;
@@ -447,6 +449,26 @@ async function boot() {
 $('btn-home').addEventListener('click', () => navigateTo(null));
 $('btn-back-home').addEventListener('click', () => navigateTo(null));
 
+// ── Sidebar collapse toggle ─────────────────────────────────
+(function () {
+  const STORAGE_KEY = 'sidebar-collapsed';
+  const mainContent = document.querySelector('.main-content');
+  const btn         = $('sidebar-collapse-toggle');
+  if (!mainContent || !btn) return;
+
+  // Restore saved state
+  if (localStorage.getItem(STORAGE_KEY) === 'true') {
+    mainContent.classList.add('sidebar-collapsed');
+    btn.title = 'Expand sidebar';
+  }
+
+  btn.addEventListener('click', () => {
+    const collapsed = mainContent.classList.toggle('sidebar-collapsed');
+    localStorage.setItem(STORAGE_KEY, String(collapsed));
+    btn.title = collapsed ? 'Expand sidebar' : 'Collapse sidebar';
+  });
+})();
+
 // ── DC toggle ──────────────────────────────────────────────
 $('dc-us').addEventListener('click', () => switchDatacenter(false));
 $('dc-eu').addEventListener('click', () => switchDatacenter(true));
@@ -490,7 +512,7 @@ document.querySelectorAll('.tool-card:not(.tool-card-soon)').forEach((card) => {
 });
 
 async function loadTool(toolName) {
-  const names = { companies: 'Companies & Users', notes: 'Notes', entities: 'Entities', 'member-activity': 'Member Activity', teams: 'Teams' };
+  const names = { companies: 'Companies & Users', notes: 'Notes', entities: 'Entities', 'member-activity': 'Member Activity', teams: 'Teams', 'notes-merge': 'Merge Duplicate Notes' };
   setText('topbar-tool-name', names[toolName] || toolName);
   showScreen('tool');
   _currentTool = toolName;
@@ -501,6 +523,7 @@ async function loadTool(toolName) {
   $('sidebar-entities').classList.toggle('hidden', toolName !== 'entities');
   $('sidebar-member-activity').classList.toggle('hidden', toolName !== 'member-activity');
   $('sidebar-teams').classList.toggle('hidden', toolName !== 'teams');
+  $('sidebar-notes-merge').classList.toggle('hidden', toolName !== 'notes-merge');
 
   try {
     if (toolName === 'companies') {
@@ -529,6 +552,7 @@ async function loadTool(toolName) {
   if (toolName === 'notes')            window.initNotesModule?.();
   if (toolName === 'entities')         window.initEntitiesModule?.();
   if (toolName === 'member-activity')  { if (typeof initMemberActivityModule === 'function') initMemberActivityModule(); }
+  if (toolName === 'notes-merge')      window.initNotesMergeModule?.();
   if (toolName === 'teams') {
     window.initTeamsCrudModule?.();
     window.initTeamMembershipModule?.();
@@ -667,6 +691,7 @@ function showView(view, { updateUrl = false } = {}) {
     'teams-crud-export', 'teams-crud-import', 'teams-crud-delete-csv', 'teams-crud-delete-all',
     'members-teams-mgmt-manage',
     'users-export', 'users-import', 'users-delete-csv', 'users-delete-all',
+    'notes-merge-view',
   ].forEach((v) => {
     const el = $(`view-${v}`);
     if (el) el.classList.toggle('hidden', v !== view);

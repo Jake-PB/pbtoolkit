@@ -166,6 +166,12 @@ body {
   align-items: start;
 }
 
+/* Grid items default to min-width:auto — they expand to fit content rather than
+   shrink. Wide content (tables, nowrap summary bars) blows out the 1fr column and
+   overflows the viewport. min-width:0 lets the column shrink; child overflow rules
+   (overflow:hidden, overflow-x:auto) then contain the content correctly. */
+#view-area { min-width: 0; }
+
 /* ── Sidebar nav ── */
 .sidebar-nav {
   display: flex;
@@ -236,6 +242,65 @@ body {
   transition: background .15s, color .15s;
 }
 .btn-back-home:hover { background: var(--c-border); color: var(--c-text); }
+
+/* ── Sidebar collapse toggle ── */
+.nav-section-row {
+  display: flex;
+  align-items: center;
+}
+.nav-section-row .nav-section-label {
+  flex: 1;
+  border-bottom: none;  /* border lives on the row now */
+  padding-bottom: 8px;
+  margin-bottom: 0;
+}
+.nav-section-row {
+  border-bottom: 1px solid var(--c-border);
+  margin-bottom: 4px;
+  padding-bottom: 0;
+}
+
+.sidebar-collapse-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  flex-shrink: 0;
+  border: 1px solid var(--c-border);
+  border-radius: var(--r-sm);
+  background: none;
+  cursor: pointer;
+  color: var(--c-muted);
+  font-size: 13px;
+  line-height: 1;
+  margin-right: 14px;
+  margin-bottom: 8px;
+  transition: background .15s, color .15s;
+}
+.sidebar-collapse-toggle:hover { background: var(--c-border); color: var(--c-text); }
+
+/* Collapsed state: narrow sidebar, icon flips, nav content hidden */
+.main-content.sidebar-collapsed {
+  grid-template-columns: 44px 1fr;
+}
+.main-content.sidebar-collapsed .sidebar-nav > *:not(.nav-section-row) {
+  display: none;
+}
+.main-content.sidebar-collapsed .nav-section-row .nav-section-label {
+  display: none;
+}
+.main-content.sidebar-collapsed .nav-section-row {
+  border-bottom: none;
+  justify-content: center;
+  padding: 4px 0;
+}
+.main-content.sidebar-collapsed .sidebar-collapse-toggle {
+  margin-right: 0;
+  margin-bottom: 0;
+  /* flip ‹‹ to ›› */
+  transform: rotate(180deg);
+}
 
 .mobile-nav-toggle { display: none; }
 
@@ -1245,6 +1310,10 @@ input:focus, select:focus, textarea:focus {
   .sidebar-nav.mobile-nav-open .mobile-nav-chevron { transform: rotate(180deg); }
 
   .nav-section-label { display: none; }
+  /* Collapse toggle not needed on mobile — mobile nav toggle handles it */
+  .sidebar-collapse-toggle { display: none; }
+  /* Ensure collapsed class doesn't apply the narrow grid on mobile */
+  .main-content.sidebar-collapsed { grid-template-columns: 1fr; }
 
   .nav-group-label {
     margin: 8px 0 2px;
@@ -1962,3 +2031,109 @@ select.ri-input {
 }
 .ri-status--ok { color: var(--c-ok); }
 .ri-status--error { color: var(--c-danger); }
+
+/* ── Notes Merge: group preview cards ───────────────────── */
+
+/* Table always has a scroll container so it never blows out the panel */
+.nm-group-table-wrap { overflow-x: auto; }
+
+/* Summary bar items */
+.nm-group-label    { white-space: nowrap; flex-shrink: 0; }
+.nm-group-count    { color: var(--c-muted); font-weight: 400; white-space: nowrap; flex-shrink: 0; }
+.nm-group-title    { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; font-weight: 400; flex: 1; }
+.nm-group-customer { color: var(--c-muted); font-weight: 400; font-size: 12px; white-space: nowrap; flex-shrink: 0; }
+.nm-group-spacer   { flex: 0; }  /* not needed now that title takes flex:1 */
+.nm-group-hint     { font-size: 11px; color: var(--c-muted); font-weight: 400; white-space: nowrap; flex-shrink: 0; }
+
+@media (max-width: 768px) {
+  /* Hide non-essential summary labels so the row doesn't overflow */
+  .nm-group-customer { display: none; }
+  .nm-group-hint     { display: none; }
+}
+
+/* ── Notes Merge: compare modal layout ──────────────────── */
+
+/* Group row: needs min-width:0 so the label flex child can truncate */
+.nm-cmp-group-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.nm-cmp-group-label {
+  font-size: 13px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+  flex: 1;
+}
+
+.nm-cmp-controls-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding-left: 11px;
+  flex-wrap: wrap;
+  row-gap: 4px;
+}
+
+.nm-cmp-nav-controls {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+/* Split body: grid-template-rows:1fr gives the single row a definite height so
+   overflow-y:auto on each panel actually works. Without it, rows size to content
+   and the panels never scroll — they just overflow the modal. */
+.nm-split-body {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  grid-template-rows: 1fr;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+#nm-split-left {
+  padding: 18px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  border-right: 1px solid var(--c-border);
+  min-width: 0;
+}
+
+#nm-split-right {
+  padding: 18px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  min-width: 0;
+}
+
+/* Stack panels at 768px — at narrower widths each 50% column is too cramped
+   for note detail rows to render comfortably side by side. */
+@media (max-width: 768px) {
+  .nm-split-body {
+    grid-template-columns: 1fr;
+    grid-template-rows: none;   /* rows auto-size when stacked */
+    overflow-y: auto;
+    overflow-x: hidden;
+  }
+  #nm-split-left {
+    border-right: none;
+    border-bottom: 1px solid var(--c-border);
+    overflow-y: visible;        /* stacked: whole body scrolls, not each panel */
+    overflow-x: hidden;
+  }
+  #nm-split-right {
+    overflow-y: visible;
+    overflow-x: hidden;
+  }
+  .nm-cmp-nav-controls { margin-left: 0; }
+}
