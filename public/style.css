@@ -166,6 +166,12 @@ body {
   align-items: start;
 }
 
+/* Grid items default to min-width:auto — they expand to fit content rather than
+   shrink. Wide content (tables, nowrap summary bars) blows out the 1fr column and
+   overflows the viewport. min-width:0 lets the column shrink; child overflow rules
+   (overflow:hidden, overflow-x:auto) then contain the content correctly. */
+#view-area { min-width: 0; }
+
 /* ── Sidebar nav ── */
 .sidebar-nav {
   display: flex;
@@ -1962,3 +1968,109 @@ select.ri-input {
 }
 .ri-status--ok { color: var(--c-ok); }
 .ri-status--error { color: var(--c-danger); }
+
+/* ── Notes Merge: group preview cards ───────────────────── */
+
+/* Table always has a scroll container so it never blows out the panel */
+.nm-group-table-wrap { overflow-x: auto; }
+
+/* Summary bar items */
+.nm-group-label    { white-space: nowrap; flex-shrink: 0; }
+.nm-group-count    { color: var(--c-muted); font-weight: 400; white-space: nowrap; flex-shrink: 0; }
+.nm-group-title    { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; font-weight: 400; flex: 1; }
+.nm-group-customer { color: var(--c-muted); font-weight: 400; font-size: 12px; white-space: nowrap; flex-shrink: 0; }
+.nm-group-spacer   { flex: 0; }  /* not needed now that title takes flex:1 */
+.nm-group-hint     { font-size: 11px; color: var(--c-muted); font-weight: 400; white-space: nowrap; flex-shrink: 0; }
+
+@media (max-width: 768px) {
+  /* Hide non-essential summary labels so the row doesn't overflow */
+  .nm-group-customer { display: none; }
+  .nm-group-hint     { display: none; }
+}
+
+/* ── Notes Merge: compare modal layout ──────────────────── */
+
+/* Group row: needs min-width:0 so the label flex child can truncate */
+.nm-cmp-group-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.nm-cmp-group-label {
+  font-size: 13px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+  flex: 1;
+}
+
+.nm-cmp-controls-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding-left: 11px;
+  flex-wrap: wrap;
+  row-gap: 4px;
+}
+
+.nm-cmp-nav-controls {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+/* Split body: grid-template-rows:1fr gives the single row a definite height so
+   overflow-y:auto on each panel actually works. Without it, rows size to content
+   and the panels never scroll — they just overflow the modal. */
+.nm-split-body {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  grid-template-rows: 1fr;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+#nm-split-left {
+  padding: 18px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  border-right: 1px solid var(--c-border);
+  min-width: 0;
+}
+
+#nm-split-right {
+  padding: 18px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  min-width: 0;
+}
+
+/* Stack panels at 768px — at narrower widths each 50% column is too cramped
+   for note detail rows to render comfortably side by side. */
+@media (max-width: 768px) {
+  .nm-split-body {
+    grid-template-columns: 1fr;
+    grid-template-rows: none;   /* rows auto-size when stacked */
+    overflow-y: auto;
+    overflow-x: hidden;
+  }
+  #nm-split-left {
+    border-right: none;
+    border-bottom: 1px solid var(--c-border);
+    overflow-y: visible;        /* stacked: whole body scrolls, not each panel */
+    overflow-x: hidden;
+  }
+  #nm-split-right {
+    overflow-y: visible;
+    overflow-x: hidden;
+  }
+  .nm-cmp-nav-controls { margin-left: 0; }
+}
